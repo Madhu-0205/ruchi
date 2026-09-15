@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+@theme {
+  --color-cream: #fbf7f1;
+  --color-surface: #ffffff;
+  --color-ink: #211b15;
+  --color-muted: #71685d;
+  --color-line: #ece4d8;
+  --color-flame: #e4572e;
+  --color-flame-deep: #c7431f;
+  --color-flame-soft: #fdeee6;
+  --color-sage: #44785a;
+  --color-sage-soft: #e9f2ec;
+  --color-gold: #b97f10;
+  --color-gold-soft: #fdf3dd;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "SF Pro Text", "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Georgia", "Times New Roman", serif;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  background: var(--color-cream);
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  background: var(--color-cream);
+}
+
+/* Keep tap targets comfortable on mobile */
+button,
+a {
+  touch-action: manipulation;
+}
+
+/* Hide scrollbars in horizontal chip rows but keep scrolling */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Cooking Mode: stop the page from scrolling behind the overlay */
+.cooking-lock {
+  overflow: hidden;
+  touch-action: none;
+}

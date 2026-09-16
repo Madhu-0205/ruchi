@@ -11,6 +11,7 @@ import {
   Plus,
   RotateCcw,
   ScanLine,
+  Send,
   Sparkles,
   X,
 } from "lucide-react";
@@ -20,7 +21,8 @@ import { useRuchi } from "@/lib/store";
 import { INGREDIENTS, findIngredient } from "@/lib/data/ingredients";
 import { parseIngredientText } from "@/lib/engine/parse";
 import { track } from "@/lib/engine/analytics";
-import type { DetectedItem } from "@/lib/ai";
+import { getVisionService, prepareImageForVision } from "@/lib/ai";
+import type { VisionAnalysis } from "@/lib/ai";
 import type { Intent } from "@/lib/types";
 
 // ── Flow states ─────────────────────────────────────────────
@@ -44,6 +46,7 @@ const GOAL_CHIPS: { id: Intent | "filling"; label: string }[] = [
 
 const ANALYZING_LINES = [
   "Looking through your kitchen...",
+  "Finding what you can make...",
   "Counting the eggs...",
   "Checking what's ripe...",
   "Almost there...",
@@ -54,7 +57,7 @@ function emojiFor(idOrName: string): string {
   const map: Record<string, string> = {
     egg: "🥚", paneer: "🧀", tomato: "🍅", onion: "🧅", potato: "🥔",
     rice: "🍚", bread: "🍞", curd: "🥛", milk: "🥛", carrot: "🥕",
-    "green-chili": "🌶️", capsicum: "🫑", lemon: "🍋", chicken: "🍗",
+    "green-chili": "🌶️", capsicum: "🫑", lemon: "🍋", "chicken-breast": "🍗",
     "coriander-leaves": "🌿", spinach: "🥬", cabbage: "🥬", peas: "🫛",
     "spring-onion": "🧅", garlic: "🧄", ginger: "🫚", butter: "🧈",
     "toor-dal": "🟡", "moong-dal": "🟢", oats: "🥣", poha: "🍚", atta: "🌾",
@@ -79,6 +82,7 @@ export default function ScanScreen() {
   const [editValue, setEditValue] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const visionAbortRef = useRef<AbortController | null>(null);
 
   // Rotating analysis copy — "no generic loading screens"
   useEffect(() => {
@@ -90,64 +94,66 @@ export default function ScanScreen() {
     return () => clearInterval(t);
   }, [phase]);
 
-  const startAnalyze = useCallback(async (dataUrl: string, source: "camera" | "upload") => {
-    setPreviewUrl(dataUrl);
-    setPhase("analyzing");
-    setError(null);
-    track("meal_recommendation_viewed", { via: `scan-${source}` });
-    try {
-      const res = await fetch("/api/vision", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: dataUrl }),
-      });
-      const json = (await res.json()) as {
-        ok: boolean;
-        reason?: string;
-        items?: DetectedItem[];
-        lowConfidence?: boolean;
-      };
-      if (!json.ok || !json.items) {
-        // Vision unavailable → honest text fallback
-        setError("vision-unavailable");
+  // Leave the flow → cancel any in-flight vision request.
+  useEffect(() => {
+    return () => visionAbortRef.current?.abort();
+  }, []);
+
+  const startAnalyze = useCallback(
+    async (dataUrl: string, source: "camera" | "upload") => {
+      setPreviewUrl(dataUrl);
+      setPhase("analyzing");
+      setError(null);
+      track("meal_recommendation_viewed", { via: `scan-${source}` });
+
+      visionAbortRef.current?.abort();
+      const controller = new AbortController();
+      visionAbortRef.current = controller;
+
+      let analysis: VisionAnalysis | null = null;
+      try {
+        analysis = await getVisionService().detectIngredients({
+          imageDataUrl: dataUrl,
+          userText: textValue.trim() || undefined,
+          signal: controller.signal,
+        });
+      } catch {
+        analysis = null; // defensive: the service itself never throws
+      }
+
+      if (controller.signal.aborted) return; // user left the flow
+
+      if (!analysis || analysis.ingredients.length === 0) {
+        // Honest fallback: never fake a vision result.
+        setError(analysis ? "nothing-found" : "vision-unavailable");
         setPhase("text");
         return;
       }
-      if (json.items.length === 0) {
-        setError("nothing-found");
-        setPhase("text");
-        return;
-      }
+
       setItems(
-        json.items.map((it, i) => ({
-          key: `${it.id ?? it.name}-${i}`,
-          id: it.id,
-          name: it.name,
-          quantity: it.estimatedQuantity,
-          uncertain: it.uncertain,
+        analysis.ingredients.map((ing, i) => ({
+          key: `${ing.catalogId ?? ing.label}-${i}`,
+          id: ing.catalogId,
+          name: ing.label,
+          quantity: ing.quantity,
+          uncertain: ing.uncertain,
         })),
       );
       setPhase("confirm");
-      track("ingredient_added", { via: "photo", detected: json.items.length });
-    } catch {
-      setError("network");
-      setPhase("text");
-    }
-  }, []);
+      track("ingredient_added", { via: "photo", detected: analysis.ingredients.length });
+    },
+    [textValue],
+  );
 
   const onFilePicked = useCallback(
-    (file: File | undefined, source: "camera" | "upload") => {
+    async (file: File | undefined, source: "camera" | "upload") => {
       if (!file) return;
-      if (file.size > 4.2 * 1024 * 1024) {
-        setError("too-big");
+      const prep = await prepareImageForVision(file);
+      if (!prep.ok) {
+        setError(prep.reason === "too-large" ? "too-big" : "bad-image");
         return;
       }
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === "string") void startAnalyze(reader.result, source);
-      };
-      reader.onerror = () => setError("read-failed");
-      reader.readAsDataURL(file);
+      void startAnalyze(prep.dataUrl, source);
     },
     [startAnalyze],
   );
@@ -199,12 +205,16 @@ export default function ScanScreen() {
   };
 
   const confirmAndRecommend = () => {
-    const ids = items.map((x) => x.id).filter((x): x is string => Boolean(x));
+    // Uncertain guesses never enter the kitchen unconfirmed — they either get
+    // tapped "Yes", corrected, or removed. That's the anti-hallucination gate.
+    const ids = items.filter((x) => !x.uncertain).map((x) => x.id).filter((x): x is string => Boolean(x));
     if (ids.length === 0) return;
     for (const id of ids) addItem(id);
     track("meal_selected", { via: "scan-confirm", ingredients: ids.length });
     go("home");
   };
+
+  const confidentCount = items.filter((x) => !x.uncertain && x.id).length;
 
   const parseText = () => {
     const parsed = parseIngredientText(textValue);
@@ -221,7 +231,6 @@ export default function ScanScreen() {
     setPhase("confirm");
   };
 
-  // The "why" for recommendations after confirmation happens on Home.
   const uncertainCount = items.filter((x) => x.uncertain).length;
 
   return (
@@ -286,6 +295,30 @@ export default function ScanScreen() {
               </p>
             </div>
 
+            {/* Photo + text: "I want something high protein" */}
+            <div className="mb-4">
+              <div className="relative">
+                <textarea
+                  value={textValue}
+                  onChange={(e) => setTextValue(e.target.value)}
+                  rows={2}
+                  placeholder='Optional: "I want something high protein and under ₹100"'
+                  className="w-full resize-none rounded-2xl border border-line bg-white px-4 py-3 pr-11 text-[14px] outline-none focus:border-ink/40"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={!textValue.trim()}
+                  aria-label="Attach a photo to your note"
+                  className="absolute right-2.5 top-3 rounded-xl p-1.5 text-flame disabled:opacity-30"
+                >
+                  <Send size={16} />
+                </button>
+              </div>
+              <p className="mt-1.5 text-center text-[11px] text-muted">
+                Add a note and RUCHI reads it with your photo.
+              </p>
+            </div>
+
             <button
               onClick={() => {
                 setPhase("text");
@@ -296,10 +329,12 @@ export default function ScanScreen() {
               <Keyboard size={14} /> Or type: &ldquo;I have eggs, tomato, paneer…&rdquo;
             </button>
 
-            {error === "too-big" && (
+            {(error === "too-big" || error === "bad-image") && (
               <div className="mt-4">
                 <Note tone="flame">
-                  That photo is over 4MB. Try another one — most camera photos are fine.
+                  {error === "too-big"
+                    ? "That photo is too large even after compressing. Try another one."
+                    : "That file isn't a photo we can read. JPEG, PNG or WebP please."}
                 </Note>
               </div>
             )}
@@ -343,6 +378,15 @@ export default function ScanScreen() {
                 />
               ))}
             </div>
+            <button
+              onClick={() => {
+                visionAbortRef.current?.abort();
+                setPhase("capture");
+              }}
+              className="mt-5 rounded-full px-4 py-2 text-[13px] font-semibold text-muted hover:text-ink"
+            >
+              Cancel
+            </button>
           </motion.div>
         )}
 
@@ -377,9 +421,10 @@ export default function ScanScreen() {
               </div>
             </div>
 
+            {/* Confident items first */}
             <Card className="divide-y divide-line overflow-hidden">
               <AnimatePresence initial={false}>
-                {items.map((it) => (
+                {items.filter((it) => !it.uncertain).map((it) => (
                   <motion.div
                     key={it.key}
                     layout
@@ -493,7 +538,98 @@ export default function ScanScreen() {
               </AnimatePresence>
             </Card>
 
-            {/* Add missing item */}
+            {/* Uncertain guesses — clearly separated, confirm or correct in one tap */}
+            {uncertainCount > 0 && (
+              <div className="mt-3">
+                <p className="mb-2 px-1 text-[12px] font-bold uppercase tracking-wider text-muted">
+                  Not sure about these — quick check
+                </p>
+                <Card className="divide-y divide-line overflow-hidden border-dashed">
+                  <AnimatePresence initial={false}>
+                    {items.filter((it) => it.uncertain).map((it) => (
+                      <motion.div
+                        key={it.key}
+                        layout
+                        initial={{ opacity: 0, x: -16 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: 16 }}
+                        transition={{ type: "spring", damping: 26, stiffness: 320 }}
+                        className="px-4 py-3"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <span className="text-xl">{emojiFor(it.id ?? it.name)}</span>
+                            <div className="min-w-0">
+                              <p className="truncate text-[15px] font-semibold">
+                                {it.name.charAt(0).toUpperCase() + it.name.slice(1)}
+                                {it.quantity && (
+                                  <span className="ml-2 text-[12px] font-medium text-muted">
+                                    × {it.quantity}
+                                  </span>
+                                )}
+                              </p>
+                              <p className="text-[12px] text-muted">
+                                I think this is {it.name}. Is that right?
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <button
+                              onClick={() => markCertain(it.key)}
+                              className="rounded-full bg-sage-soft px-2.5 py-1.5 text-[12px] font-bold text-sage"
+                            >
+                              <Check size={12} className="mr-0.5 inline" /> Yes
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingKey(it.key);
+                                setEditValue("");
+                              }}
+                              className="rounded-full border border-line bg-white px-2.5 py-1.5 text-[12px] font-bold text-ink"
+                            >
+                              Change
+                            </button>
+                            <button
+                              onClick={() => removeFromList(it.key)}
+                              className="rounded-full p-1.5 text-muted hover:text-ink"
+                              aria-label={`Remove ${it.name}`}
+                            >
+                              <X size={15} />
+                            </button>
+                          </div>
+                        </div>
+                        {editingKey === it.key && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: "auto", opacity: 1 }}
+                            className="mt-2 flex gap-2 overflow-hidden"
+                          >
+                            <input
+                              autoFocus
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") changeItem(it.key, editValue);
+                                if (e.key === "Escape") setEditingKey(null);
+                              }}
+                              placeholder="What is it actually?"
+                              className="min-w-0 flex-1 rounded-xl border border-line bg-white px-3 py-2 text-[14px] outline-none focus:border-ink/40"
+                            />
+                            <Button
+                              variant="secondary"
+                              onClick={() => changeItem(it.key, editValue)}
+                            >
+                              <Check size={15} />
+                            </Button>
+                          </motion.div>
+                        )}
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </Card>
+              </div>
+            )}
+
             <div className="mt-4 flex gap-2">
               <input
                 value={newItemName}
@@ -528,9 +664,18 @@ export default function ScanScreen() {
             </div>
 
             <div className="sticky bottom-4 mt-8 pb-2">
-              <Button className="w-full py-4 text-base shadow-lg shadow-ink/15" onClick={confirmAndRecommend}>
+              <Button
+                className="w-full py-4 text-base shadow-lg shadow-ink/15"
+                onClick={confirmAndRecommend}
+                disabled={confidentCount === 0}
+              >
                 <ScanLine size={18} /> Find my meals →
               </Button>
+              {confidentCount === 0 && (
+                <p className="mt-2 text-center text-[12px] text-muted">
+                  Confirm or fix the guesses above first — then we cook.
+                </p>
+              )}
             </div>
           </motion.div>
         )}
@@ -547,7 +692,7 @@ export default function ScanScreen() {
               <div className="mb-5">
                 <Note tone="gold">
                   {error === "vision-unavailable" &&
-                    "Photo reading isn't set up on this device yet. Type what you have instead — same result, ten seconds."}
+                    "I couldn't read the photo this time. Tell me what you have instead — same result, ten seconds."}
                   {error === "nothing-found" &&
                     "Couldn't spot any ingredients in that photo. Try a closer shot, or just type them:"}
                   {error === "network" && "That didn't go through. Type what you have instead:"}
@@ -604,21 +749,21 @@ export default function ScanScreen() {
       <input
         ref={cameraInputRef}
         type="file"
-        accept="image/*"
+        accept="image/jpeg,image/png,image/webp"
         capture="environment"
         className="hidden"
         onChange={(e) => {
-          onFilePicked(e.target.files?.[0], "camera");
+          void onFilePicked(e.target.files?.[0], "camera");
           e.target.value = "";
         }}
       />
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept="image/jpeg,image/png,image/webp"
         className="hidden"
         onChange={(e) => {
-          onFilePicked(e.target.files?.[0], "upload");
+          void onFilePicked(e.target.files?.[0], "upload");
           e.target.value = "";
         }}
       />

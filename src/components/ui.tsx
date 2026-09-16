@@ -100,7 +100,7 @@ export function Pill({
   className = "",
 }: {
   children: ReactNode;
-  tone?: "neutral" | "protein" | "savings" | "time";
+  tone?: "neutral" | "protein" | "savings" | "time" | "sage";
   className?: string;
 }) {
   const tones: Record<string, string> = {
@@ -108,6 +108,7 @@ export function Pill({
     protein: "bg-sage-soft text-sage",
     savings: "bg-gold-soft text-gold",
     time: "bg-flame-soft text-flame-deep",
+    sage: "bg-sage-soft text-sage",
   };
   return (
     <span

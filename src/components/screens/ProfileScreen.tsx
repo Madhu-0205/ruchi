@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
-import { Card, Pill, SectionTitle, Stat } from "@/components/ui";
+import { useEffect, useMemo, useState } from "react";
+import { CloudUpload, LogOut } from "lucide-react";
+import { Button, Card, Note, Pill, SectionTitle, Stat } from "@/components/ui";
 import { useRuchi, streak, weeklyProgress } from "@/lib/store";
 import { buildNudges, weeklySummaryLine } from "@/lib/engine/nudge";
 import type {
@@ -41,7 +42,13 @@ export default function ProfileScreen() {
     history,
     nudges,
     markNudgesRead,
+    account,
+    cloudSyncAt,
+    signInWithPuter,
+    signOutFromPuter,
+    pushToCloud,
   } = useRuchi();
+  const [signInState, setSignInState] = useState<"idle" | "busy" | "unavailable">("idle");
 
   const week = useMemo(() => weeklyProgress({ history }), [history]);
   const currentStreak = useMemo(() => streak({ history }), [history]);
@@ -74,16 +81,71 @@ export default function ProfileScreen() {
     if (unread > 0) markNudgesRead();
   }, [nudges, markNudgesRead]);
 
+  const doSignIn = async () => {
+    setSignInState("busy");
+    const outcome = await signInWithPuter();
+    setSignInState(outcome === "signed-in" ? "idle" : "unavailable");
+  };
+
   return (
     <div className="pt-6">
       <header className="mb-6">
         <h1 className="font-display text-[30px] font-bold tracking-tight">
-          {name ? `Hey ${name}` : "Your profile"}
+          {account?.username ? `Hey ${account.username}` : name ? `Hey ${name}` : "Your profile"}
         </h1>
         <p className="mt-1 text-[15px] text-muted">
           {weeklySummaryLine(week.meals)}
         </p>
       </header>
+
+      {/* Account — lightweight, appears where persistence becomes real */}
+      <Card className="mb-6 p-5">
+        {account ? (
+          <div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-[15px] font-bold">@{account.username}</p>
+                <p className="mt-0.5 text-[12px] text-muted">
+                  {cloudSyncAt
+                    ? `Kitchen backed up · ${new Date(cloudSyncAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`
+                    : "Signed in — your kitchen backs up automatically."}
+                </p>
+              </div>
+              <Pill tone="sage">Cloud on</Pill>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <Button variant="secondary" onClick={pushToCloud} className="flex-1">
+                <CloudUpload size={15} /> Back up now
+              </Button>
+              <Button variant="ghost" onClick={signOutFromPuter}>
+                <LogOut size={15} /> Sign out
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <p className="text-[15px] font-bold">Your kitchen, remembered.</p>
+            <p className="mt-1 text-[13px] leading-relaxed text-muted">
+              Connect Puter to keep your streak, preferences and cooked meals safe —
+              and they&apos;ll follow you to any device.
+            </p>
+            {signInState === "unavailable" && (
+              <div className="mt-3">
+                <Note tone="flame">
+                  Puter sign-in didn&apos;t open just now. Try again in a bit — everything
+                  still works without it.
+                </Note>
+              </div>
+            )}
+            <Button className="mt-4 w-full" onClick={doSignIn} disabled={signInState === "busy"}>
+              {signInState === "busy" ? "Connecting…" : "Connect Puter"}
+            </Button>
+            <p className="mt-2 text-center text-[11px] text-muted">
+              You can cook everything without an account. This just backs it up.
+            </p>
+          </div>
+        )}
+      </Card>
 
       {/* Progress */}
       <Card className="p-5">

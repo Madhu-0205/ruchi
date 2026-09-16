@@ -137,14 +137,41 @@ export function whyThis(m: MatchScore, f: MatchFilters): string[] {
   return why;
 }
 
-/** Top 3–4 recommendations with microcopy + structured why-lines. */
-export function recommend(f: MatchFilters): Recommendation[] {
+/**
+ * Top 3–4 recommendations with microcopy + structured why-lines.
+ *
+ * `aiPicks` (optional) is the AI's selection/order over the candidate list —
+ * validated recipeIds only (enforced in lib/ai/recommendations.ts). The AI
+ * reorders the deterministic top slice and can replace the "why" copy with
+ * its matchReason lines; it can never introduce a recipe that didn't score.
+ */
+export function recommend(f: MatchFilters, aiPicks?: { recipeId: string; matchReason: string[] }[]): Recommendation[] {
   const ranked = matchRecipes(f);
-  const top = ranked.slice(0, 4);
 
-  return top.map((m, idx) => {
+  // Apply AI ordering (only ids present in the deterministic top slice).
+  const byId = new Map(ranked.map((m) => [m.recipe.id, m]));
+  const top: MatchScore[] = [];
+  if (aiPicks && aiPicks.length > 0) {
+    for (const pick of aiPicks) {
+      const m = byId.get(pick.recipeId);
+      if (m && !top.includes(m)) top.push(m);
+    }
+    // Fill remaining slots with the best deterministic scores not already picked.
+    for (const m of ranked) {
+      if (top.length >= 4) break;
+      if (!top.includes(m)) top.push(m);
+    }
+  } else {
+    top.push(...ranked.slice(0, 4));
+  }
+  const ordered = top.slice(0, 4);
+
+  return ordered.map((m, idx) => {
     let reason: string;
-    if (m.missingCount === 0) {
+    const aiReasons = aiPicks?.find((p) => p.recipeId === m.recipe.id)?.matchReason ?? [];
+    if (aiReasons.length > 0) {
+      reason = aiReasons[0] ?? "";
+    } else if (m.missingCount === 0) {
       reason =
         idx === 0
           ? "You have literally everything. The kitchen chose this. 👀"
@@ -169,7 +196,7 @@ export function recommend(f: MatchFilters): Recommendation[] {
       recipe: m.recipe,
       missing: m.missing,
       reason,
-      why: whyThis(m, f),
+      why: aiReasons.length > 0 ? [...aiReasons, ...whyThis(m, f)].slice(0, 5) : whyThis(m, f),
       usesCount,
       protein: computeNutrition(m.recipe, f.servings).protein,
       costPerServing: computeCostPerServing(m.recipe, f.servings),

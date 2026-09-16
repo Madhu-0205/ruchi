@@ -13,10 +13,10 @@ import {
 } from "lucide-react";
 import { Button, Card, Pill } from "@/components/ui";
 import { useScreen } from "@/lib/store/screens";
-import { useRuchi } from "@/lib/store";
+import { useRuchi, computeStreak } from "@/lib/store";
 import { getRecipe } from "@/lib/data/recipes";
 import { getHelp } from "@/lib/data/help";
-import { helpAnswer, aiEnabled } from "@/lib/ai";
+import { getAssistantService, aiConfigured } from "@/lib/ai";
 import { track } from "@/lib/engine/analytics";
 import { computeCost, computeNutrition } from "@/lib/engine/nutrition";
 import { scaleStepText } from "@/lib/engine/units";
@@ -74,6 +74,7 @@ export default function CookingMode() {
   const [helpBusy, setHelpBusy] = useState(false);
   const [aiHelp, setAiHelp] = useState<AiHelpAnswer | null>(null);
   const [servings, setServings] = useState(1);
+  const [streakAtDone, setStreakAtDone] = useState(0);
 
   const recipe = recipeId ? getRecipe(recipeId) : undefined;
   const steps = recipe?.steps ?? [];
@@ -99,13 +100,20 @@ export default function CookingMode() {
     setHelpBusy(true);
     setAiHelp(null);
     let answer: AiHelpAnswer | null = null;
-    if (aiEnabled()) {
-      answer = await helpAnswer({
+    if (aiConfigured()) {
+      const ai = await getAssistantService().answer({
         recipeName: recipe.name,
+        stepIndex,
+        stepCount: steps.length,
         stepTitle: step.title,
         stepText: step.text,
+        heat: step.heat,
+        durationMin: step.durationMin,
+        lookFor: step.lookFor,
+        ingredients: recipe.ingredients.map((ri) => ri.ingredientId),
         question,
       });
+      if (ai) answer = { answer: ai.answer, tone: ai.tone };
     }
     if (!answer) {
       answer = { answer: fallbackAnswer(question, recipe, step), tone: "instruct" };
@@ -129,6 +137,9 @@ export default function CookingMode() {
       cost,
       deliveryCompareCost: recipe.deliveryCompare.cost,
     });
+    setStreakAtDone(
+      computeStreak(useRuchi.getState().history, Date.now()),
+    );
     track("delivery_saved_metric", { recipeId: recipe.id });
     setCompleted(true);
   };
@@ -143,18 +154,17 @@ export default function CookingMode() {
         calories={nutrition?.calories ?? 0}
         cost={computeCost(recipe, 1)}
         deliveryCost={recipe.deliveryCompare.cost}
+        streakDays={streakAtDone}
         onHome={() => {
           go("home");
           setCompleted(false);
           setStepIndex(0);
           setCelebrated(false);
-          setCompleted(false);
         }}
         onAgain={() => {
           setCompleted(false);
           setStepIndex(0);
           setCelebrated(false);
-          setCompleted(false);
         }}
       />
     );
@@ -381,7 +391,7 @@ export default function CookingMode() {
                   <>
                     <p className="text-[15px] leading-relaxed">{aiHelp.answer}</p>
                     <p className="mt-2 text-[12px] text-muted">
-                      {aiEnabled() ? "AI-assisted" : "RUCHI's kitchen notes"} · estimates, not gospel
+                      {aiConfigured() ? "AI-assisted" : "RUCHI's kitchen notes"} · estimates, not gospel
                     </p>
                   </>
                 ) : (
@@ -406,6 +416,7 @@ function CompletionView({
   calories,
   cost,
   deliveryCost,
+  streakDays,
   onHome,
 }: {
   recipeName: string;
@@ -413,10 +424,17 @@ function CompletionView({
   calories: number;
   cost: number;
   deliveryCost: number;
+  streakDays: number;
   onHome: () => void;
   onAgain: () => void;
 }) {
   const saved = Math.max(0, deliveryCost - cost);
+  const streakLine =
+    streakDays >= 2
+      ? `🔥 ${streakDays} days in a row. Keep it alive tomorrow.`
+      : streakDays === 1
+        ? "🔥 Day one. Cook again tomorrow to start a streak."
+        : null;
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-ink text-cream">
       <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
@@ -446,6 +464,10 @@ function CompletionView({
             vs ₹{deliveryCost} delivery. Estimated, but still yours.
           </p>
         </div>
+
+        {streakLine && (
+          <p className="mt-5 text-[14px] font-semibold text-gold-soft">{streakLine}</p>
+        )}
 
         <Button
           className="mt-8 w-full max-w-xs bg-cream text-ink hover:bg-white"

@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Search, X, Sparkles, Camera } from "lucide-react";
 import { Card, Chip, Pill, SectionTitle, Stat } from "@/components/ui";
-import { useRuchi, weeklyProgress } from "@/lib/store";
+import { useRuchi, weeklyProgress, streak } from "@/lib/store";
 import { useScreen } from "@/lib/store/screens";
 import { INGREDIENTS, searchIngredients } from "@/lib/data/ingredients";
-import { recommend } from "@/lib/engine/match";
+import { recommend, matchRecipes } from "@/lib/engine/match";
+import { getRecommendationService, aiConfigured } from "@/lib/ai";
 import { computeCostPerServing, computeNutrition } from "@/lib/engine/nutrition";
 import type { Intent, People } from "@/lib/types";
 
@@ -46,20 +47,68 @@ export default function HomeScreen() {
 
   const results = useMemo(() => searchIngredients(query), [query]);
 
-  const recs = useMemo(
-    () =>
-      recommend({
-        hasIds: inventoryIds,
-        intents,
-        timeMax,
-        budgetMax: budget,
-        servings: people,
-        diet: prefs.diet,
-      }),
+  const filters = useMemo(
+    () => ({
+      hasIds: inventoryIds,
+      intents,
+      timeMax,
+      budgetMax: budget,
+      servings: people,
+      diet: prefs.diet,
+    }),
     [inventoryIds, intents, timeMax, budget, people, prefs.diet],
   );
 
+  // Deterministic engine first — instant recommendations, never a blank UI.
+  const recs = useMemo(() => recommend(filters), [filters]);
+
+  // AI-refined list (falls back to the deterministic one until/unless AI lands).
+  const [aiRecs, setAiRecs] = useState<ReturnType<typeof recommend> | null>(null);
+
+  // Stale-AI-order reset: when filters change, the previous AI ordering no
+  // longer applies — drop it during render (React's adjust-state-when-props-
+  // change pattern) instead of a setState-in-effect.
+  const [prevFilters, setPrevFilters] = useState(filters);
+  if (prevFilters !== filters) {
+    setPrevFilters(filters);
+    setAiRecs(null);
+  }
+
+  // AI re-rank (Puter): refines order + copy over the SAME candidate set.
+  // Anything the AI returns is validated recipeIds; the engine re-renders
+  // instantly if it fails. Never blocks or blocks-out the list.
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      try {
+        if (!aiConfigured()) return; // deterministic list is final
+        const picks = await getRecommendationService().rankRecommendations({
+          availableIngredientIds: filters.hasIds,
+          intents: filters.intents,
+          timeMaxMin: filters.timeMax,
+          budgetMaxInr: filters.budgetMax,
+          servings: filters.servings,
+          diet: filters.diet,
+          skill: prefs.skill,
+          candidates: matchRecipes(filters)
+            .slice(0, 12)
+            .map((m) => ({ recipeId: m.recipe.id, score: m.score })),
+        });
+        if (!cancelled && picks && picks.length > 0) {
+          setAiRecs(recommend(filters, picks));
+        }
+      } catch {
+        // deterministic recs stay on screen — no-op
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [filters, recs, prefs.skill]);
+  const shown = aiRecs ?? recs;
   const week = useMemo(() => weeklyProgress({ history }), [history]);
+  const currentStreak = useMemo(() => streak({ history }), [history]);
 
   const has = (id: string) => inventoryIds.includes(id);
   const toggle = (id: string) => (has(id) ? removeItem(id) : addItem(id));
@@ -114,6 +163,14 @@ export default function HomeScreen() {
             <Stat value={`₹${week.saved}`} label="saved" tone="savings" />
             <Stat value={`${week.protein}g`} label="protein" tone="protein" />
           </div>
+          {currentStreak >= 1 && (
+            <div className="mt-3 border-t border-line pt-3 text-[13px] font-semibold text-flame-deep">
+              🔥 {currentStreak}-day streak
+              {currentStreak >= 2
+                ? " — cook again tomorrow to keep it alive."
+                : " — cook again tomorrow to start it properly."}
+            </div>
+          )}
         </Card>
       )}
 
@@ -288,14 +345,14 @@ export default function HomeScreen() {
           <SectionTitle
             right={
               <span className="text-[12px] font-medium text-muted">
-                {recs.length} pick{recs.length === 1 ? "" : "s"} for you
+                {shown.length} pick{shown.length === 1 ? "" : "s"} for you
               </span>
             }
           >
             Cook this tonight
           </SectionTitle>
 
-          {recs.length === 0 ? (
+          {shown.length === 0 ? (
             <Card className="p-5">
               <p className="font-semibold">Nothing fits those filters — yet.</p>
               <p className="mt-1 text-sm text-muted">
@@ -304,7 +361,7 @@ export default function HomeScreen() {
             </Card>
           ) : (
             <div className="space-y-3">
-              {recs.map((rec, idx) => {
+              {shown.map((rec, idx) => {
                 const r = rec.recipe;
                 const n = computeNutrition(r, people);
                 const cost = computeCostPerServing(r, people);
@@ -329,7 +386,7 @@ export default function HomeScreen() {
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center justify-between gap-2">
                             <h3 className="truncate text-[17px] font-bold">{r.name}</h3>
-                            {idx === 0 && recs.length > 1 && (
+                            {idx === 0 && shown.length > 1 && (
                               <span className="shrink-0 rounded-full bg-ink px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cream">
                                 Top pick
                               </span>

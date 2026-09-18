@@ -77,19 +77,31 @@ describe("signIn", () => {
     expect(isSignedIn()).toBe(true);
   });
 
-  it("maps a dismissed popup to unavailable, never throws", async () => {
+  it("maps a dismissed popup to cancelled, never throws", async () => {
+    // The SDK rejects with `{ error: "auth_window_closed" }` when the user
+    // closes the popup (exact shape from @heyputer/puter.js source).
     h.state.signInImpl = async () => {
-      throw new Error("popup closed");
+      throw { error: "auth_window_closed" };
     };
     const outcome = await signIn();
-    expect(outcome).toEqual({ status: "unavailable" });
+    expect(outcome).toEqual({ status: "unavailable", reason: "cancelled" });
   });
 
-  it("maps a missing SDK to unavailable", async () => {
-    // user stays null (getUser resolves null) → unavailable
+  it("maps a browser-blocked popup to blocked, never throws", async () => {
+    // The SDK rejects with `{ error: "popup_blocked" }` when window.open
+    // returns null (popup blocker / embedded webview without popups).
+    h.state.signInImpl = async () => {
+      throw { error: "popup_blocked", msg: "The sign-in popup was blocked by the browser." };
+    };
+    const outcome = await signIn();
+    expect(outcome).toEqual({ status: "unavailable", reason: "blocked" });
+  });
+
+  it("maps a missing SDK to unavailable (stalled)", async () => {
+    // signIn resolves but getUser returns null → no identity was produced.
     h.state.user = null;
     const outcome = await signIn();
-    expect(outcome).toEqual({ status: "unavailable" });
+    expect(outcome).toEqual({ status: "unavailable", reason: "stalled" });
   });
 });
 

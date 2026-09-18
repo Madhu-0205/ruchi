@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CloudUpload, LogOut } from "lucide-react";
+import { CloudUpload, Loader2, LogOut } from "lucide-react";
 import { Button, Card, Note, Pill, SectionTitle, Stat } from "@/components/ui";
 import { useRuchi, streak, weeklyProgress } from "@/lib/store";
+import { authAvailable, authErrorMessage, type AuthFailure } from "@/lib/auth/supabase-auth";
 import { buildNudges, weeklySummaryLine } from "@/lib/engine/nudge";
 import type {
   BudgetPerMeal,
@@ -33,6 +34,8 @@ const GOALS: { id: FitnessGoal; label: string }[] = [
   { id: "lean-bulk", label: "🏋️ Lean bulk" },
 ];
 
+type Mode = "sign-in" | "sign-up";
+
 export default function ProfileScreen() {
   const {
     name,
@@ -44,11 +47,19 @@ export default function ProfileScreen() {
     markNudgesRead,
     account,
     cloudSyncAt,
-    signInWithPuter,
-    signOutFromPuter,
-    pushToCloud,
+    syncError,
+    authError,
+    signIn,
+    signUp,
+    signOut,
+    syncNow,
   } = useRuchi();
-  const [signInState, setSignInState] = useState<"idle" | "busy" | "unavailable">("idle");
+  const [mode, setMode] = useState<Mode>("sign-in");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const configured = authAvailable();
 
   const week = useMemo(() => weeklyProgress({ history }), [history]);
   const currentStreak = useMemo(() => streak({ history }), [history]);
@@ -81,17 +92,44 @@ export default function ProfileScreen() {
     if (unread > 0) markNudgesRead();
   }, [nudges, markNudgesRead]);
 
-  const doSignIn = async () => {
-    setSignInState("busy");
-    const outcome = await signInWithPuter();
-    setSignInState(outcome === "signed-in" ? "idle" : "unavailable");
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      if (mode === "sign-up") {
+        const outcome = await signUp(email.trim(), password);
+        if (outcome === "needs-email-confirmation") {
+          setNotice(`Check ${email.trim()} to confirm your email, then sign in.`);
+        }
+      } else {
+        await signIn(email.trim(), password);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const authErrorCopy: Record<AuthFailure, string> = {
+    "invalid-credentials": authErrorMessage("invalid-credentials"),
+    "email-taken": authErrorMessage("email-taken"),
+    "weak-password": authErrorMessage("weak-password"),
+    "rate-limited": authErrorMessage("rate-limited"),
+    network: authErrorMessage("network"),
+    unconfigured: authErrorMessage("unconfigured"),
+    error: authErrorMessage("error"),
   };
 
   return (
     <div className="pt-6">
       <header className="mb-6">
         <h1 className="font-display text-[30px] font-bold tracking-tight">
-          {account?.username ? `Hey ${account.username}` : name ? `Hey ${name}` : "Your profile"}
+          {account?.displayName
+            ? `Hey ${account.displayName}`
+            : name
+              ? `Hey ${name}`
+              : "Your profile"}
         </h1>
         <p className="mt-1 text-[15px] text-muted">
           {weeklySummaryLine(week.meals)}
@@ -104,42 +142,97 @@ export default function ProfileScreen() {
           <div>
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="truncate text-[15px] font-bold">@{account.username}</p>
+                <p className="truncate text-[15px] font-bold">
+                  {account.displayName ?? account.email}
+                </p>
+                {account.email && (
+                  <p className="mt-0.5 truncate text-[12px] text-muted">{account.email}</p>
+                )}
                 <p className="mt-0.5 text-[12px] text-muted">
-                  {cloudSyncAt
-                    ? `Kitchen backed up · ${new Date(cloudSyncAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`
-                    : "Signed in — your kitchen backs up automatically."}
+                  {syncError
+                    ? "Last backup didn't finish — your meals are safe on this device and will sync again."
+                    : cloudSyncAt
+                      ? `Backed up · ${new Date(cloudSyncAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`
+                      : "Signed in — your kitchen backs up automatically."}
                 </p>
               </div>
-              <Pill tone="sage">Cloud on</Pill>
+              <Pill tone={syncError ? "time" : "sage"}>
+                {syncError ? "Retry pending" : "Backed up"}
+              </Pill>
             </div>
             <div className="mt-4 flex gap-2">
-              <Button variant="secondary" onClick={pushToCloud} className="flex-1">
+              <Button variant="secondary" onClick={syncNow} className="flex-1">
                 <CloudUpload size={15} /> Back up now
               </Button>
-              <Button variant="ghost" onClick={signOutFromPuter}>
+              <Button variant="ghost" onClick={signOut}>
                 <LogOut size={15} /> Sign out
               </Button>
             </div>
           </div>
         ) : (
           <div>
-            <p className="text-[15px] font-bold">Your kitchen, remembered.</p>
+            <p className="text-[15px] font-bold">Save your cooking progress.</p>
             <p className="mt-1 text-[13px] leading-relaxed text-muted">
-              Connect Puter to keep your streak, preferences and cooked meals safe —
-              and they&apos;ll follow you to any device.
+              Create a free RUCHI account to keep your streak, meals and preferences safe —
+              and follow you to any device.
             </p>
-            {signInState === "unavailable" && (
+
+            {notice && (
               <div className="mt-3">
-                <Note tone="flame">
-                  Puter sign-in didn&apos;t open just now. Try again in a bit — everything
-                  still works without it.
-                </Note>
+                <Note tone="sage">{notice}</Note>
               </div>
             )}
-            <Button className="mt-4 w-full" onClick={doSignIn} disabled={signInState === "busy"}>
-              {signInState === "busy" ? "Connecting…" : "Connect Puter"}
-            </Button>
+            {authError && (
+              <div className="mt-3">
+                <Note tone="flame">{authErrorCopy[authError]}</Note>
+              </div>
+            )}
+            {!configured && (
+              <p className="mt-3 text-[12px] leading-relaxed text-muted">
+                Accounts aren&apos;t set up in this build yet — everything still works on
+                this device, and your progress is saved locally.
+              </p>
+            )}
+
+            {!configured ? null : (
+              <form onSubmit={submit} className="mt-4 space-y-2">
+                <input
+                  type="email"
+                  required
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  className="w-full rounded-2xl border border-line bg-white px-4 py-3 text-[15px] outline-none focus:border-ink/40"
+                />
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  autoComplete={mode === "sign-up" ? "new-password" : "current-password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder={mode === "sign-up" ? "Create a password" : "Password"}
+                  className="w-full rounded-2xl border border-line bg-white px-4 py-3 text-[15px] outline-none focus:border-ink/40"
+                />
+                <Button type="submit" className="w-full" disabled={busy}>
+                  {busy && <Loader2 size={15} className="animate-spin" />}
+                  {mode === "sign-up" ? "Create account" : "Sign in"}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode(mode === "sign-up" ? "sign-in" : "sign-up");
+                  }}
+                  className="w-full text-center text-[12px] text-muted hover:text-ink"
+                >
+                  {mode === "sign-up"
+                    ? "Already have an account? Sign in"
+                    : "New here? Create an account"}
+                </button>
+              </form>
+            )}
+
             <p className="mt-2 text-center text-[11px] text-muted">
               You can cook everything without an account. This just backs it up.
             </p>
@@ -168,7 +261,7 @@ export default function ProfileScreen() {
         </p>
       </Card>
 
-      {/* Nudge inbox (notification architecture preview) */}
+      {/* Nudge inbox */}
       {nudges.length > 0 && (
         <div className="mt-6">
           <SectionTitle>For you</SectionTitle>

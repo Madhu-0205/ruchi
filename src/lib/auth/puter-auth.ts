@@ -1,11 +1,11 @@
 // ─────────────────────────────────────────────────────────────
-// RUCHI — account identity + cloud persistence (Puter-backed)
+// RUCHI — [DEPRECATED] Puter-backed identity + KV persistence
 // ─────────────────────────────────────────────────────────────
-// Lightweight account layer: identity and persistence ride on the Puter
-// account the user may already have signed into for AI — no new providers,
-// no app-held credentials, no blocking of anonymous use. The product works
-// fully without an account; signing in adds cloud backup of the profile,
-// preferences and cooking history.
+// SUPERSEDED by Supabase (see supabase-auth.ts / supabase-data.ts):
+// RUCHI account identity, profiles, completed meals and streaks now live
+// in Supabase Auth + Postgres with row-level security. No production code
+// imports this module anymore; kept temporarily for reference and deleted
+// in a follow-up cleanup. Puter itself remains the AI layer (lib/ai/*).
 //
 // Design rules:
 // - Anonymous-first: nothing here gates the core loop.
@@ -22,6 +22,8 @@ import {
   puterSignOut,
   puterKvGet,
   puterKvSet,
+  lastAuthFailureKind,
+  type AuthFailureKind,
 } from "@/lib/ai/puter";
 
 const KV_SNAPSHOT_KEY = "ruchi.snapshot.v1";
@@ -33,13 +35,15 @@ export interface AccountUser {
 
 export type SignInOutcome =
   | { status: "signed-in"; user: AccountUser }
-  | { status: "unavailable" } // no SDK / offline / provider disabled
+  | { status: "unavailable"; reason?: AuthFailureKind } // no SDK / offline / provider disabled
   | { status: "dismissed" }; // user closed the popup — not an error
 
 /** Sign in via Puter's browser popup. Must be called from a user gesture. */
 export async function signIn(): Promise<SignInOutcome> {
   const user = await puterSignIn({ attempt_temp_user_creation: false, request_auth: true });
-  if (!user?.username) return { status: "unavailable" };
+  if (!user?.username) {
+    return { status: "unavailable", reason: lastAuthFailureKind() ?? undefined };
+  }
   return {
     status: "signed-in",
     user: { username: user.username, isTemp: Boolean(user.is_temp) },

@@ -1,9 +1,26 @@
 // ─────────────────────────────────────────────────────────────
 // RUCHI — client store (zustand + localStorage persistence)
 // ─────────────────────────────────────────────────────────────
-// Single-user MVP. This module is the seam where a real backend later
-// replaces localStorage: today the cloud mirror is Puter KV (see
-// lib/auth) — swap the sync functions, keep the API.
+// Identity + durable data live in Supabase (auth + RLS-protected
+// tables); local state stays responsive and ANONYMOUS-FIRST — every
+// core feature works signed out from localStorage alone.
+//
+// Separation of concerns (enforced by imports):
+// - Supabase (lib/auth/supabase*) owns identity, profiles, completed
+//   meals and streaks. It never touches AI behavior.
+// - Puter (lib/ai/*) is the optional AI layer only. It never touches
+//   account state.
+//
+// Sync model:
+// - Cloud is a mirror of durable data, never the source of truth for
+//   the running UI. Local writes apply instantly; cloud writes are
+//   async and failure-tolerant (quiet `syncError`, retried by syncNow).
+// - Meals dedupe by (recipeId, local calendar day) in BOTH directions,
+//   so anonymous progress migrates once and same-day duplicates never
+//   multiply.
+// - Streaks are computed locally (computeStreak, deterministic) and
+//   server-side via the record_completed_meal_day RPC — the client
+//   never sends a streak number anywhere.
 
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -15,13 +32,25 @@ import type {
   UserPreferences,
 } from "@/lib/types";
 import { track } from "@/lib/engine/analytics";
-import type { AccountUser } from "@/lib/auth/puter-auth";
+import { dayKeyOf } from "@/lib/datetime";
 import {
-  signIn as authSignIn,
-  signOut as authSignOut,
-  saveSnapshot,
-  loadSnapshot,
-} from "@/lib/auth/puter-auth";
+  currentUser as sbCurrentUser,
+  onAuthChange,
+  signIn as sbSignIn,
+  signUp as sbSignUp,
+  signOut as sbSignOut,
+  type AccountUser,
+  type AuthFailure,
+} from "@/lib/auth/supabase-auth";
+import {
+  fetchCompletedMeals,
+  fetchProfile,
+  insertCompletedMeals,
+  recordStreakDay,
+  upsertProfile,
+} from "@/lib/auth/supabase-data";
+
+export { dayKeyOf };
 
 const DEFAULT_PREFS: UserPreferences = {
   diet: "eggetarian",
@@ -34,6 +63,14 @@ const DEFAULT_PREFS: UserPreferences = {
   equipment: ["stove", "pan", "pot"],
 };
 
+/**
+ * Whose data currently lives in localStorage. `null` = fresh device or
+ * nothing cooked yet. `anon:<userId>` = that user cooked here while
+ * signed out (their data — safe to merge when they sign back in).
+ * `<userId>` = signed in as that user.
+ */
+type LocalOwner = string | null;
+
 interface RuchiState {
   name: string;
   inventory: KitchenItem[];
@@ -42,10 +79,17 @@ interface RuchiState {
   nudges: NudgeEvent[];
   lastNudges: Partial<Record<NudgeKind, number>>;
   lastCookedAt?: number;
-  /** Signed-in Puter account, when the user connected one. Anonymous-first. */
+
+  /** Signed-in RUCHI account (Supabase). Null = anonymous. */
   account: AccountUser | null;
-  /** Last cloud mirror attempt, for a quiet one-line status in Profile. */
+  /** Quiet sync indicator for Profile: last successful mirror time. */
   cloudSyncAt?: number;
+  /** True when the last cloud write/read failed — Profile shows a gentle note. */
+  syncError: boolean;
+  /** Auth failure kind for honest, non-technical error copy. */
+  authError: AuthFailure | null;
+  /** Whose data currently lives in localStorage (see LocalOwner doc). */
+  localOwner: LocalOwner;
 
   setName: (n: string) => void;
   addItem: (ingredientId: string) => void;
@@ -58,89 +102,154 @@ interface RuchiState {
   markNudgesRead: () => void;
   resetAll: (opts?: { keepKitchen?: boolean }) => void;
 
-  /** Puter popup sign-in; merges anything new from the cloud afterwards. */
-  signInWithPuter: () => Promise<"signed-in" | "unavailable" | "dismissed">;
-  signOutFromPuter: () => void;
-  /** Best-effort mirror of durable state to the signed-in user's cloud. */
-  pushToCloud: () => void;
+  signIn: (email: string, password: string) => Promise<"signed-in" | "failed">;
+  signUp: (
+    email: string,
+    password: string,
+  ) => Promise<"signed-in" | "needs-email-confirmation" | "failed">;
+  signOut: () => void;
+  /** Retry any pending cloud mirror (also used by "Back up now"). */
+  syncNow: () => void;
 }
 
 function makeId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-// ── Cloud mirror helpers (module scope: debounce across actions) ──
-
-let pushTimer: ReturnType<typeof setTimeout> | null = null;
-let lastPushedJson = "";
-
-function durableSnapshot(s: RuchiState) {
-  return {
-    name: s.name,
-    inventory: s.inventory,
-    prefs: s.prefs,
-    history: s.history,
-    lastCookedAt: s.lastCookedAt,
-  };
+/** Meals are deduped by recipe + local calendar day, in both directions. */
+function mealKey(e: Pick<MealHistoryEntry, "recipeId" | "cookedAt">): string {
+  return `${e.recipeId}|${dayKeyOf(e.cookedAt)}`;
 }
 
-function scheduleCloudPush(get: () => RuchiState) {
-  if (pushTimer) clearTimeout(pushTimer);
-  pushTimer = setTimeout(() => {
-    pushTimer = null;
+// ── Cloud sync helpers (module scope: debounce across actions) ──
+
+let profileTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleProfilePush(get: () => RuchiState) {
+  if (profileTimer) clearTimeout(profileTimer);
+  profileTimer = setTimeout(() => {
+    profileTimer = null;
     const s = get();
-    if (!s.account) return; // anonymous — nothing to mirror onto
-    const json = JSON.stringify(durableSnapshot(s));
-    if (json === lastPushedJson) return;
-    lastPushedJson = json;
-    void saveSnapshot(JSON.parse(json)).then((ok) => {
-      if (ok) useRuchi.setState({ cloudSyncAt: Date.now() });
+    if (!s.account) return;
+    void upsertProfile({ displayName: s.name || null, prefs: s.prefs }).then((r) => {
+      if (r.ok) useRuchi.setState({ cloudSyncAt: Date.now(), syncError: false });
+      else useRuchi.setState({ syncError: true });
     });
   }, 1200);
 }
 
-/** Cloud fill-in on sign-in: adds what's missing locally, never deletes. */
-async function mergeFromCloud(
-  get: () => RuchiState,
-): Promise<{ merged: number } | null> {
-  const res = await loadSnapshot();
-  if (res.status !== "loaded" || !res.snapshot) return null;
-  const snap = res.snapshot as Partial<RuchiState>;
+/**
+ * Mirror local meals → cloud and pull cloud meals → local, deduped by
+ * (recipeId, day). Anonymous progress migrates exactly once; nothing is
+ * ever deleted on either side. Streak RPC fires for newly pushed days
+ * (idempotent per day server-side).
+ */
+async function syncMeals(get: () => RuchiState): Promise<void> {
   const s = get();
-  let merged = 0;
-  const patch: Partial<RuchiState> = {};
+  if (!s.account) return;
+  const remote = await fetchCompletedMeals();
+  if (!remote.ok) {
+    useRuchi.setState({ syncError: true });
+    return;
+  }
+  const remoteEntries = remote.data;
+  const remoteKeys = new Set(remoteEntries.map(mealKey));
+  const localKeys = new Set(s.history.map(mealKey));
 
-  if (!s.name && typeof snap.name === "string" && snap.name) {
-    patch.name = snap.name;
-    merged++;
+  // 1) Local meals the cloud hasn't seen → insert (migration / retry).
+  const missingRemotely = s.history.filter((e) => !remoteKeys.has(mealKey(e)));
+  let pushedDays: string[] = [];
+  if (missingRemotely.length > 0) {
+    const ins = await insertCompletedMeals(missingRemotely);
+    if (!ins.ok) {
+      useRuchi.setState({ syncError: true });
+      return;
+    }
+    pushedDays = [...new Set(missingRemotely.map((e) => dayKeyOf(e.cookedAt)))];
   }
-  if (Array.isArray(snap.inventory) && s.inventory.length === 0 && snap.inventory.length > 0) {
-    patch.inventory = snap.inventory as KitchenItem[];
-    merged++;
-  }
-  if (Array.isArray(snap.history) && snap.history.length > 0) {
-    const have = new Set(s.history.map((h) => h.id));
-    const fresh = (snap.history as MealHistoryEntry[]).filter(
-      (h) => h && h.id && !have.has(h.id),
-    );
-    if (fresh.length > 0) {
-      patch.history = [...fresh, ...s.history]
-        .sort((a, b) => b.cookedAt - a.cookedAt)
-        .slice(0, 200);
-      merged += fresh.length;
+
+  // 2) Cloud meals this device hasn't seen → fill in locally (new device).
+  const freshLocally = remoteEntries.filter((e) => !localKeys.has(mealKey(e)));
+
+  if (pushedDays.length > 0) {
+    for (const day of pushedDays) {
+      // p_local_date is "YYYY-MM-DD" — RPC is idempotent per day.
+      const [y, m, d] = day.split("-").map(Number) as [number, number, number];
+      const dayMs = new Date(y, m - 1, d, 21).getTime();
+      const r = await recordStreakDay(dayMs);
+      if (!r.ok) {
+        useRuchi.setState({ syncError: true });
+        return;
+      }
     }
   }
-  if (
-    patch.history?.length &&
-    (!s.lastCookedAt || (snap.lastCookedAt ?? 0) > s.lastCookedAt)
-  ) {
-    patch.lastCookedAt = Math.max(
-      s.lastCookedAt ?? 0,
-      ...(patch.history as MealHistoryEntry[]).map((h) => h.cookedAt),
-    );
+
+  if (freshLocally.length > 0) {
+    const merged = [...freshLocally, ...s.history]
+      .sort((a, b) => b.cookedAt - a.cookedAt)
+      .slice(0, 200);
+    useRuchi.setState({
+      history: merged,
+      lastCookedAt: Math.max(s.lastCookedAt ?? 0, ...merged.map((h) => h.cookedAt)) || s.lastCookedAt,
+    });
   }
-  if (merged > 0) useRuchi.setState(patch);
-  return { merged };
+
+  useRuchi.setState({ cloudSyncAt: Date.now(), syncError: false });
+}
+
+/**
+ * Sign-in reconciliation. Ownership rules (documented behavior):
+ * - localOwner === user.id or `anon:<user.id>` → this device holds that
+ *   user's own (possibly anonymous) data → merge into their account.
+ * - localOwner === null → fresh/nothing cooked → just pull their cloud.
+ * - localOwner belongs to a DIFFERENT user → shared-device case: do NOT
+ *   push this device's data into the new account; replace local state
+ *   with their cloud data instead (previous user's synced data is safe
+ *   in their own account; unsynced-only local data is left behind).
+ */
+async function handleSignedIn(user: AccountUser, localOwner: LocalOwner): Promise<void> {
+  const ownsLocal = localOwner === null || localOwner === user.id || localOwner === `anon:${user.id}`;
+
+  if (!ownsLocal) {
+    // Different user's device state → load their cloud data fresh.
+    const [profile, meals] = await Promise.all([fetchProfile(), fetchCompletedMeals()]);
+    const patch: Partial<RuchiState> = {
+      account: user,
+      localOwner: user.id,
+      cloudSyncAt: Date.now(),
+      syncError: !(profile.ok && meals.ok),
+      inventory: [],
+      history: meals.ok ? meals.data : [],
+      lastCookedAt: meals.ok && meals.data[0] ? meals.data[0].cookedAt : undefined,
+    };
+    if (profile.ok && profile.data?.prefs) patch.prefs = profile.data.prefs;
+    if (profile.ok && profile.data?.displayName) patch.name = profile.data.displayName;
+    useRuchi.setState(patch);
+    return;
+  }
+
+  useRuchi.setState({ account: user, localOwner: user.id, authError: null });
+
+  // Fill in from cloud what's missing locally — never overwrite local.
+  const profile = await fetchProfile();
+  if (profile.ok && profile.data) {
+    const s = useRuchi.getState();
+    const patch: Partial<RuchiState> = {};
+    if (!s.name && profile.data.displayName) patch.name = profile.data.displayName;
+    // Adopt cloud prefs only when local is untouched defaults (no signal).
+    if (profile.data.prefs && JSON.stringify(s.prefs) === JSON.stringify(DEFAULT_PREFS)) {
+      patch.prefs = profile.data.prefs;
+    }
+    if (Object.keys(patch).length > 0) useRuchi.setState(patch);
+  }
+
+  await syncMeals(useRuchi.getState); // pushes local (migration) + pulls remote
+  // Keep the profile row in step with any local identity/prefs the user
+  // had before signing in (e.g. name typed anonymously).
+  const s = useRuchi.getState();
+  if (s.name || JSON.stringify(s.prefs) !== JSON.stringify(DEFAULT_PREFS)) {
+    scheduleProfilePush(useRuchi.getState);
+  }
 }
 
 export const useRuchi = create<RuchiState>()(
@@ -155,10 +264,13 @@ export const useRuchi = create<RuchiState>()(
       lastCookedAt: undefined,
       account: null,
       cloudSyncAt: undefined,
+      syncError: false,
+      authError: null,
+      localOwner: null,
 
       setName: (n) => {
         set({ name: n });
-        scheduleCloudPush(get);
+        scheduleProfilePush(get);
       },
 
       addItem: (ingredientId) => {
@@ -166,12 +278,10 @@ export const useRuchi = create<RuchiState>()(
         const item: KitchenItem = { id: makeId(), ingredientId, addedAt: Date.now() };
         set({ inventory: [...get().inventory, item] });
         track("ingredient_added", { ingredientId });
-        scheduleCloudPush(get);
       },
 
       removeItem: (ingredientId) => {
         set({ inventory: get().inventory.filter((i) => i.ingredientId !== ingredientId) });
-        scheduleCloudPush(get);
       },
 
       setItemExpiry: (ingredientId, expiresAt) => {
@@ -180,17 +290,15 @@ export const useRuchi = create<RuchiState>()(
             i.ingredientId === ingredientId ? { ...i, expiresAt } : i,
           ),
         });
-        scheduleCloudPush(get);
       },
 
       clearKitchen: () => {
         set({ inventory: [] });
-        scheduleCloudPush(get);
       },
 
       setPrefs: (p) => {
         set({ prefs: { ...get().prefs, ...p } });
-        scheduleCloudPush(get);
+        scheduleProfilePush(get);
       },
 
       logCookedMeal: (entry) => {
@@ -198,9 +306,13 @@ export const useRuchi = create<RuchiState>()(
         set({
           history: [e, ...get().history].slice(0, 200),
           lastCookedAt: e.cookedAt,
+          // localOwner is deliberately untouched: unclaimed anonymous
+          // progress stays `null` (merges into whoever signs in here);
+          // after a sign-out it's already `anon:<userId>` (re-joins that
+          // user). AI/other flows never write ownership.
         });
         track("cooking_completed", { recipeId: entry.recipeId, servings: entry.servings });
-        scheduleCloudPush(get);
+        if (get().account) void syncMeals(get); // fire-and-forget; syncNow retries
       },
 
       upsertNudges: (incoming) => {
@@ -228,25 +340,52 @@ export const useRuchi = create<RuchiState>()(
           lastNudges: {},
           lastCookedAt: undefined,
           cloudSyncAt: undefined,
+          syncError: false,
         })),
 
-      signInWithPuter: async () => {
-        const outcome = await authSignIn();
+      signIn: async (email, password) => {
+        set({ authError: null });
+        const outcome = await sbSignIn(email, password);
         if (outcome.status !== "signed-in") {
-          return outcome.status === "dismissed" ? "dismissed" : "unavailable";
+          set({ authError: outcome.reason });
+          return "failed";
         }
-        set({ account: outcome.user });
-        await mergeFromCloud(get);
-        scheduleCloudPush(get);
+        // The onAuthChange listener normally drives reconciliation; run it
+        // here too so the caller's await covers the merge.
+        await handleSignedIn(outcome.user, get().localOwner ?? null);
         return "signed-in";
       },
 
-      signOutFromPuter: () => {
-        authSignOut();
-        set({ account: null, cloudSyncAt: undefined });
+      signUp: async (email, password) => {
+        set({ authError: null });
+        const outcome = await sbSignUp(email, password);
+        if (outcome.status === "failed") {
+          set({ authError: outcome.reason });
+          return "failed";
+        }
+        if (outcome.status === "needs-email-confirmation") return outcome.status;
+        await handleSignedIn(outcome.user, get().localOwner ?? null);
+        return "signed-in";
       },
 
-      pushToCloud: () => scheduleCloudPush(get),
+      signOut: () => {
+        const prev = get().account;
+        void sbSignOut();
+        // Mark remaining local data as that user's anonymous leftovers so
+        // signing back in re-syncs it instead of duplicating it.
+        set({
+          account: null,
+          cloudSyncAt: undefined,
+          syncError: false,
+          authError: null,
+          localOwner: prev ? `anon:${prev.id}` : null,
+        });
+      },
+
+      syncNow: () => {
+        void syncMeals(get);
+        scheduleProfilePush(get);
+      },
     }),
     {
       name: "ruchi.store.v1",
@@ -259,10 +398,43 @@ export const useRuchi = create<RuchiState>()(
         nudges: s.nudges,
         lastNudges: s.lastNudges,
         lastCookedAt: s.lastCookedAt,
+        localOwner: s.localOwner,
       }),
     },
   ),
 );
+
+// ── Auth listener (browser only; the store module is imported client-side) ──
+// One subscription drives session restore after refresh, sign-outs from
+// other tabs, and user switches — no duplicated session state.
+
+let authListenerAttached = false;
+
+if (typeof window !== "undefined" && !authListenerAttached) {
+  authListenerAttached = true;
+  onAuthChange((user) => {
+    const s = useRuchi.getState();
+    if (user && s.account?.id !== user.id) {
+      void handleSignedIn(user, s.localOwner ?? null);
+    } else if (!user && s.account) {
+      useRuchi.setState({
+        account: null,
+        cloudSyncAt: undefined,
+        syncError: false,
+        localOwner: `anon:${s.account.id}`,
+      });
+    } else if (user && s.account?.id === user.id) {
+      // Same user re-emitted (token refresh) — nothing to do.
+    }
+  });
+  // Session restore on load: pick up an existing Supabase session even if
+  // the listener's INITIAL_SESSION fired before hydration of localOwner.
+  void sbCurrentUser().then((u) => {
+    if (!u) return;
+    const s = useRuchi.getState();
+    if (s.account?.id !== u.id) void handleSignedIn(u, s.localOwner ?? null);
+  });
+}
 
 // ── Derived selectors (pure functions over state) ───────────
 
@@ -282,14 +454,6 @@ export function weeklyProgress(s: Pick<RuchiState, "history">): {
     saved: week.reduce((a, h) => a + Math.max(0, h.deliveryCompareCost - h.cost), 0),
     protein: Math.round(week.reduce((a, h) => a + h.proteinG, 0)),
   };
-}
-
-/** Local-calendar day key ("2026-09-16"), immune to locale/format drift. */
-export function dayKeyOf(ms: number): string {
-  const d = new Date(ms);
-  const m = `${d.getMonth() + 1}`.padStart(2, "0");
-  const day = `${d.getDate()}`.padStart(2, "0");
-  return `${d.getFullYear()}-${m}-${day}`;
 }
 
 /**

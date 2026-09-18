@@ -17,7 +17,15 @@ export type AiEventKind =
   | "assistant_failure"
   | "chat_failure"
   | "sdk_loaded"
-  | "fallback_triggered";
+  | "fallback_triggered"
+  // Puter auth-popup lifecycle (development diagnostics)
+  | "auth_popup_open"
+  | "auth_popup_blocked"
+  | "auth_start"
+  | "auth_success"
+  | "auth_cancel"
+  | "auth_failure"
+  | "auth_timeout";
 
 interface AiEvent {
   kind: AiEventKind;
@@ -43,6 +51,29 @@ export function logAiEvent(
     // No image bytes, no user text, no keys — ids and counters only.
     console.debug("[ruchi:ai]", evt.kind, detail ?? {});
   }
+}
+
+/** Live snapshot of the Puter sign-in state for diagnostics. */
+export function authStateSnapshot(): Record<string, string | number | boolean | undefined> {
+  if (typeof window === "undefined") return { env: "server" };
+  const puter = (
+    window as unknown as {
+      puter?: {
+        authToken?: string | null;
+        env?: string;
+        puterAuthState?: { isPromptOpen?: boolean; authGranted?: boolean | null };
+      };
+    }
+  ).puter;
+  return {
+    hasSdk: Boolean(puter),
+    signedIn: Boolean(puter?.authToken),
+    env: puter?.env,
+    promptOpen: puter?.puterAuthState?.isPromptOpen,
+    // authGranted's null ("prompt never shown") is normalized to undefined for a
+    // compact event payload.
+    authGranted: puter?.puterAuthState?.authGranted ?? undefined,
+  };
 }
 
 export function recentAiEvents(n = 20): AiEvent[] {

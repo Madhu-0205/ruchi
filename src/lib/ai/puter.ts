@@ -11,7 +11,7 @@
 
 import type { ChatMessage, ChatOptions, ChatResponse } from "@heyputer/puter.js";
 import { AI_PROVIDER, TEXT_TIMEOUT_MS, VISION_TIMEOUT_MS } from "./config";
-import { logAiEvent } from "./observability";
+import { authStateSnapshot, logAiEvent } from "./observability";
 
 type PuterAi = {
   chat: (
@@ -198,26 +198,127 @@ export async function puterChat(
 // ── Auth + cloud KV (used by lib/auth) ──────────────────────
 // Typed narrowly on purpose: auth is a capability of the provider layer,
 // not a product dependency. The app talks to lib/auth's interface only.
+//
+// Known SDK behavior (verified against @heyputer/puter.js 2.x source):
+// - `auth.signIn()` opens a popup to puter.com; if the browser blocks the
+//   popup it rejects with `{ error: "popup_blocked" }` — otherwise the
+//   promise stays pending until the popup postMessages a token back, or is
+//   closed (`auth_window_closed`). It does NOT reject on its own timeout.
+// - The sign-in page renders entirely from puter.com's own GUI bundle; a
+//   blank popup means puter.com failed to render (stale session / CDN /
+//   extension), NOT an app-side problem.
+
+const AUTH_TIMEOUT_MS = 100_000; // popup sign-in is human-paced; no artificial rush
+
+/** Classification of the last failed sign-in — drives honest UI copy. */
+export type AuthFailureKind = "blocked" | "cancelled" | "stalled" | "error";
+let lastAuthFailure: AuthFailureKind | null = null;
+
+/** Why the most recent sign-in attempt failed (null = none/success). Dev diagnostics. */
+export function lastAuthFailureKind(): AuthFailureKind | null {
+  return lastAuthFailure;
+}
 
 export async function puterSignIn(opts?: {
   attempt_temp_user_creation?: boolean;
   request_auth?: boolean;
 }): Promise<PuterUser | null> {
+  lastAuthFailure = null;
   const puter = await loadPuter();
-  if (!puter?.auth) return null;
+  if (!puter?.auth) {
+    logAiEvent("auth_failure", { reason: "no-sdk" });
+    lastAuthFailure = "error";
+    return null;
+  }
+  const startedAt = Date.now();
+  logAiEvent("auth_start", { ...authStateSnapshot() });
   try {
-    await puter.auth.signIn(opts);
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(new Error("auth-timeout")),
+      AUTH_TIMEOUT_MS,
+    );
+    const timeoutPromise = new Promise<null>((resolve) => {
+      controller.signal.addEventListener("abort", () => resolve(null), { once: true });
+    });
+    const signedInBefore = Boolean(puter.auth?.isSignedIn?.());
+    const outcome = await Promise.race([
+      puter.auth
+        .signIn(opts)
+        .then(() => "resolved" as const)
+        .catch((err: unknown) => ({ error: messageOf(err) })),
+      timeoutPromise,
+    ]);
+    clearTimeout(timer);
+
+    if (outcome === null) {
+      // Popup flow timed out without settling (no token, no close event).
+      lastAuthFailure = "stalled";
+      logAiEvent("auth_timeout", {
+        ms: Date.now() - startedAt,
+        signedInBefore,
+        ...authStateSnapshot(),
+      });
+      return null; // honest failure — no session was established
+    }
+
+    if (typeof outcome === "object" && "error" in outcome) {
+      const rejected = outcome.error;
+      let kind: AuthFailureKind = "error";
+      if (rejected.includes("popup_blocked")) kind = "blocked";
+      else if (rejected.includes("auth_window_closed") || rejected.includes("cancel"))
+        kind = "cancelled";
+      lastAuthFailure = kind;
+      const isCancel = kind === "cancelled";
+      logAiEvent(isCancel ? "auth_cancel" : "auth_failure", {
+        error: rejected,
+        ms: Date.now() - startedAt,
+      });
+      return null;
+    }
+
+    // Promise resolved: the SDK postMessage handshake completed.
     const user = await puter.auth.getUser();
     if (user?.username) {
       // The user just completed an interactive sign-in — any auth latch
       // from earlier failed attempts no longer applies.
       latchUntil = 0;
       unsignedTimeoutStreak = 0;
+      logAiEvent("auth_success", {
+        username: user.username,
+        isTemp: Boolean(user.is_temp),
+        ms: Date.now() - startedAt,
+      });
+      return user;
     }
-    return user;
-  } catch {
-    return null; // popup dismissed, popup blocked, network — caller falls back
+    logAiEvent("auth_failure", { reason: "resolved-without-user" });
+    lastAuthFailure = "stalled";
+    return null;
+  } catch (err) {
+    logAiEvent("auth_failure", { reason: "exception", error: messageOf(err) });
+    lastAuthFailure = "error";
+    return null;
   }
+}
+
+/**
+ * Late-session heal: a popup sign-in may complete AFTER our await gave up
+ * (slow human, slow puter.com render). The SDK's token listener runs
+ * regardless; give the SDK a short window to settle, and treat an
+ * established session as success for the latch/state.
+ */
+export async function puterAuthStateProbe(): Promise<PuterUser | null> {
+  const puter = await loadPuter();
+  if (!puter?.auth) return null;
+  const signedIn = Boolean(puter.auth?.isSignedIn?.());
+  if (!signedIn) return null;
+  const user = await puterGetUser();
+  if (user?.username) {
+    latchUntil = 0;
+    unsignedTimeoutStreak = 0;
+    logAiEvent("auth_success", { stage: "late-session", username: user.username });
+  }
+  return user;
 }
 
 export function puterIsSignedIn(): boolean {
@@ -287,7 +388,22 @@ export async function modelSupportsVision(model: string): Promise<boolean> {
 }
 
 export function messageOf(err: unknown): string {
+  if (typeof err === "string") return err.slice(0, 140);
   if (err instanceof Error) return err.message;
+  // The SDK rejects with plain objects like { error: "popup_blocked", msg }
+  // — String() would render those as "[object Object]" and lose the code.
+  if (err && typeof err === "object") {
+    const o = err as Record<string, unknown>;
+    for (const key of ["error", "code", "message", "msg", "detail"]) {
+      const v = o[key];
+      if (typeof v === "string" && v) return v.slice(0, 140);
+    }
+    try {
+      return JSON.stringify(err).slice(0, 140);
+    } catch {
+      return "unknown-error-object";
+    }
+  }
   return String(err).slice(0, 140);
 }
 

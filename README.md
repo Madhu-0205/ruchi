@@ -37,7 +37,7 @@ INGREDIENTS → DECISION → MEAL → EXACT QUANTITIES → GUIDED COOKING → NU
 - **Framer Motion** — small, purposeful motion
 - **Lucide** icons
 
-No backend database: a single-user local MVP. The data layer is designed so an auth + Postgres/Prisma layer can replace the client store without touching UI.
+No separate backend beyond Supabase: identity and durable user data live in Supabase Auth + Postgres (RLS), while the responsive working set stays client-side. The store is the seam — swap the sync functions in `src/lib/auth/supabase-data.ts` without touching UI.
 
 ## Architecture
 
@@ -78,18 +78,24 @@ src/lib/ai/
 
 **Hard rules:** AI output is untrusted — Zod-validated or rejected; the AI may only pick recipe ids from the deterministic candidate list (never invent recipes); nutrition/cost/servings are always computed by the app from reference tables, never generated; vision failure degrades to the text path ("Tell me what you have") and never fakes results.
 
-## Accounts & cloud sync (Puter)
+## Accounts & cloud sync (Supabase)
 
-Accounts are lightweight and anonymous-first — they never gate the core loop:
+Supabase owns RUCHI user identity and durable data; Puter remains the AI layer **only** — the two are separate concerns and never cross:
 
 ```
 src/lib/auth/
-  puter-auth.ts       identity + cloud snapshot over the Puter SDK (no new providers)
+  supabase.ts         the only module importing @supabase/supabase-js (publishable key only)
+  supabase-auth.ts    sign-up / sign-in / sign-out, session restore, auth-state listener
+  supabase-data.ts    profiles, completed meals, streak RPC (RLS-scoped; auth.uid() everywhere)
+supabase/migrations/
+  0001_ruchi_init.sql tables (profiles, completed_meals, cooking_streaks), RLS policies,
+                      record_completed_meal_day(date) RPC, signup trigger
 ```
 
-- The app works fully without an account. When the user wants persistence across devices, one tap (**Connect Puter**) opens Puter's browser sign-in — the same account the AI layer may already use. No app-held credentials, no extra auth provider.
-- Durable state (name, inventory, preferences, cooked-meal history) mirrors to the user's Puter KV ~1.2s after any change, debounced and deduplicated. The cloud is a **mirror, not the source of truth**: on sign-in, cloud data fills in only what's missing locally and never deletes or overwrites local progress (history merges by id).
-- Transient state (nudges, read flags) stays local. Sign-out clears the session but keeps local cooking data.
+- **Anonymous-first.** The app works fully without an account. Sign-in appears in Profile as "Save your cooking progress" — it never gates the core loop. Without Supabase env vars the auth card says accounts aren't set up yet and everything keeps working locally.
+- **Security.** Row-level security is enabled on every user-owned table with `auth.uid()` policies; the browser only ever holds the publishable key. Streak counts are computed **by the database** via the `record_completed_meal_day` RPC from a local-calendar date — the client can never send a streak number, and same-day repeats are no-ops server-side.
+- **Verified against a real Postgres.** `npm run verify:db` and `npm run verify:e2e` apply the migration to a throwaway local database (with a minimal Supabase emulation: `auth.users` + `auth.uid()` from the JWT claim) and assert the security model end-to-end: RLS isolation between two users, anonymous default-deny, streak semantics (first meal, consecutive day, same-day duplicate no-op, gap reset, older-date no-op), and the signup trigger. These verify the SQL and data layer; hosted Supabase auth itself is exercised only once project credentials are configured.
+- **Migration safety.** Meals dedupe by (recipe, local day) in both directions: anonymous progress merges into the account exactly once, cloud meals fill in on new devices, and another user's device data is never pushed into a freshly signed-in account. Sign-out re-attributes local data as that user's anonymous leftovers (re-synced, not duplicated, on sign-in). Sync failures set a gentle `syncError`; `syncNow` retries. (Limitation: anonymous progress migrates only for the same user on the same device — there is no cross-device anonymous transfer.)
 
 ## The streak
 

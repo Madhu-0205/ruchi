@@ -41,12 +41,7 @@ export interface PuterUser {
   is_temp?: boolean;
 }
 
-type PuterKv = {
-  set: (key: string, value: string) => Promise<boolean>;
-  get: (key: string) => Promise<string | null | undefined>;
-};
-
-type PuterClient = { ai: PuterAi; auth: PuterAuth; kv?: PuterKv };
+type PuterClient = { ai: PuterAi; auth: PuterAuth };
 
 let cached: PuterClient | null = null;
 let loadPromise: Promise<PuterClient | null> | null = null;
@@ -63,15 +58,53 @@ let latchUntil = 0;
 const LATCH_AFTER = 2;
 const LATCH_COOLDOWN_MS = 10 * 60_000;
 
+// ── First-access diagnostics (dev-only) ─────────────────────
+// Puter's SDK starts its consent/temp-user flow the moment it is EVALUATED,
+// so any early loadPuter() equals a surprise authorization prompt. These
+// markers let tests (and dev consoles) prove Puter is only ever touched
+// by explicit AI actions. Production behavior is unaffected.
+let firstAccess: { stage: string; at: number } | null = null;
+let sdkImported = false;
+let sdkImportAllowed = false;
+
+/** Dev/test diagnostics: how and when Puter was first touched. */
+export function puterSdkState(): {
+  firstAccess: { stage: string; at: number } | null;
+  sdkImported: boolean;
+} {
+  return { firstAccess: firstAccess ? { ...firstAccess } : null, sdkImported };
+}
+
+function recordFirstAccess(stage: string): void {
+  if (!firstAccess) firstAccess = { stage, at: Date.now() };
+  if (process.env.NODE_ENV !== "production") {
+    logAiEvent("sdk_first_access", { stage });
+  }
+}
+
 /**
  * Lazily import the browser SDK. Returns null on SSR, when the package is
  * absent, or when the provider is disabled — callers treat null as
  * "AI unavailable" and use the deterministic fallbacks.
+ *
+ * GATED: evaluating the SDK starts Puter's consent flow, so the import is
+ * allowed only for explicit AI features (photo scan, AI re-rank request,
+ * cooking help). Passive paths — startup renders, session restoration,
+ * availability probes, screens a signed-out user is just viewing — get
+ * null and stay on the deterministic implementations. Availability probes
+ * call `aiActive()` instead, which answers WITHOUT loading the SDK.
  */
 export async function loadPuter(): Promise<PuterClient | null> {
   if (typeof window === "undefined") return null;
   if (AI_PROVIDER === "none") return null;
+  // Already loaded by an earlier explicit action: reuse it. No path can
+  // re-trigger the SDK's consent flow by using an established client.
   if (cached) return cached;
+  if (!sdkImportAllowed) {
+    recordFirstAccess("blocked-passive-load");
+    return null;
+  }
+  recordFirstAccess("sdk-import");
   if (!loadPromise) {
     loadPromise = import("@heyputer/puter.js")
       .then((mod) => {
@@ -79,6 +112,7 @@ export async function loadPuter(): Promise<PuterClient | null> {
           (mod as { default?: unknown }).default) as PuterClient | undefined;
         if (!client?.ai) throw new Error("puter.js loaded without ai module");
         cached = client;
+        sdkImported = true;
         logAiEvent("sdk_loaded", { provider: "puter" });
         return client;
       })
@@ -93,12 +127,36 @@ export async function loadPuter(): Promise<PuterClient | null> {
   return loadPromise;
 }
 
-/** Clear the cached client (used by tests and provider resets). */
+/**
+ * Open the SDK-import gate for the duration of `fn` — the wrapper used by
+ * EXPLICIT AI entry points (photo scan, cooking help). Restores the
+ * previous state afterwards; once the SDK is cached, every caller (even
+ * passive ones) can reuse it without any further prompting.
+ */
+export async function withPuterSdk<T>(fn: () => Promise<T>): Promise<T> {
+  const wasAllowed = sdkImportAllowed;
+  sdkImportAllowed = true;
+  try {
+    return await fn();
+  } finally {
+    sdkImportAllowed = wasAllowed;
+  }
+}
+
+/** True only when the SDK is actually loaded and usable — no side effects. */
+export function puterSdkReady(): boolean {
+  return cached !== null;
+}
+
+/** Clear the cached client and diagnostics (used by tests and provider resets). */
 export function resetPuterForTests(): void {
   cached = null;
   loadPromise = null;
   unsignedTimeoutStreak = 0;
   latchUntil = 0;
+  firstAccess = null;
+  sdkImported = false;
+  sdkImportAllowed = false;
 }
 
 export function isPuterLikelyAvailable(): boolean {
@@ -343,28 +401,6 @@ export function puterSignOut(): void {
     cached?.auth?.signOut?.();
   } catch {
     // signing out must never throw into the UI
-  }
-}
-
-/** Store a string in the user's Puter cloud KV. Returns success. */
-export async function puterKvSet(key: string, value: string): Promise<boolean> {
-  const puter = await loadPuter();
-  if (!puter?.kv) return false;
-  try {
-    return await puter.kv.set(key, value);
-  } catch {
-    return false;
-  }
-}
-
-/** Read a string from the user's Puter cloud KV. Null when missing/unavailable. */
-export async function puterKvGet(key: string): Promise<string | null> {
-  const puter = await loadPuter();
-  if (!puter?.kv) return null;
-  try {
-    return (await puter.kv.get(key)) ?? null;
-  } catch {
-    return null;
   }
 }
 

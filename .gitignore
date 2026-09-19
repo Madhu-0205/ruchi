@@ -33,3 +33,6 @@ yarn-error.log*
 
 # Supabase CLI local state
 supabase/.temp/
+
+# Misnamed env file (kept local; contents migrated to .env.local)
+ruchi.env.local

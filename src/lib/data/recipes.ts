@@ -9,6 +9,10 @@ import { recipeSchema } from "@/lib/data/schemas";
 import type { Recipe } from "@/lib/types";
 import { RECIPES_A } from "./recipes-a";
 import { RECIPES_B } from "./recipes-b";
+import { RECIPES_C } from "./recipes-c";
+import { RECIPES_D } from "./recipes-d";
+import { RECIPES_E } from "./recipes-e";
+import { RECIPES_F } from "./recipes-f";
 
 function validate(recipes: Recipe[]): Recipe[] {
   return recipes.map((r, i) => {
@@ -23,7 +27,14 @@ function validate(recipes: Recipe[]): Recipe[] {
   });
 }
 
-export const RECIPES: Recipe[] = [...validate(RECIPES_A), ...validate(RECIPES_B)];
+export const RECIPES: Recipe[] = [
+  ...validate(RECIPES_A),
+  ...validate(RECIPES_B),
+  ...validate(RECIPES_C),
+  ...validate(RECIPES_D),
+  ...validate(RECIPES_E),
+  ...validate(RECIPES_F),
+];
 
 const byId = new Map(RECIPES.map((r) => [r.id, r]));
 

@@ -26,6 +26,7 @@ export interface AccountUser {
 
 export type AuthFailure =
   | "invalid-credentials"
+  | "email-not-confirmed"
   | "email-taken"
   | "weak-password"
   | "rate-limited"
@@ -35,6 +36,7 @@ export type AuthFailure =
 
 const friendlyMessage: Record<AuthFailure, string> = {
   "invalid-credentials": "That email and password don't match an account.",
+  "email-not-confirmed": "Confirm your email first — the link is in your inbox.",
   "email-taken": "An account with this email already exists. Try signing in instead.",
   "weak-password": "Choose a stronger password — at least 6 characters.",
   "rate-limited": "Too many attempts just now. Wait a minute and try again.",
@@ -49,14 +51,30 @@ export function authErrorMessage(kind: AuthFailure): string {
 }
 
 /** Map a supabase-js error to a stable, user-friendly failure kind. */
-function classify(error: { message?: string; status?: number } | null): AuthFailure {
+function classify(error: {
+  message?: string;
+  code?: string | number;
+  status?: number;
+} | null): AuthFailure {
   if (!error) return "error";
   const msg = (error.message ?? "").toLowerCase();
+  // supabase-js exposes stable error codes (e.g. "over_email_send_rate_limit")
+  // on some paths and human messages on others — match both.
+  const code = String(error.code ?? "").toLowerCase();
   if (msg.includes("invalid login credentials")) return "invalid-credentials";
+  if (msg.includes("email not confirmed") || msg.includes("not confirmed"))
+    return "email-not-confirmed";
   if (msg.includes("already registered") || msg.includes("already exists")) return "email-taken";
   if (msg.includes("password") && (msg.includes("weak") || msg.includes("short") || msg.includes("at least")))
     return "weak-password";
-  if (msg.includes("rate limit") || msg.includes("too many") || error.status === 429)
+  if (
+    msg.includes("rate limit") ||
+    msg.includes("rate_limit") ||
+    msg.includes("too many") ||
+    code.includes("rate_limit") ||
+    error.status === 429 ||
+    code === "429"
+  )
     return "rate-limited";
   if (msg.includes("fetch") || msg.includes("network") || msg.includes("failed to fetch"))
     return "network";

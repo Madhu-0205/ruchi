@@ -7,7 +7,7 @@
 
 import { RECIPES } from "@/lib/data/recipes";
 import { findIngredient, isAssumedPantry } from "@/lib/data/ingredients";
-import type { Intent, Recipe } from "@/lib/types";
+import type { Intent, Recipe, SubstitutionRule } from "@/lib/types";
 import { computeCostPerServing, computeNutrition } from "./nutrition";
 
 export interface MatchFilters {
@@ -24,8 +24,28 @@ export interface MatchScore {
   score: number;
   missing: string[]; // core (non-optional) ingredient ids not in the kitchen
   missingCount: number;
+  /** Missing ids that the recipe's substitution table can cover. */
+  substitutable: string[];
   reasons: string[]; // human-readable why-lines
   protein: number;
+}
+
+/**
+ * Recipe-aware substitution check: can this missing ingredient be covered
+ * by the recipe's own substitution rules? The user's kitchen is checked
+ * against each rule's `useId` — a rule without a concrete swap ("skip it")
+ * is not automatically satisfiable, so it stays missing.
+ */
+function substitutionCover(r: Recipe, missingIds: string[], has: Set<string>): string[] {
+  if (missingIds.length === 0) return [];
+  const rules = new Map<string, SubstitutionRule>();
+  for (const s of r.substitutions) rules.set(s.missingId, s);
+  const covered: string[] = [];
+  for (const id of missingIds) {
+    const rule = rules.get(id);
+    if (rule?.useId && has.has(rule.useId)) covered.push(id);
+  }
+  return covered;
 }
 
 export function matchRecipes(f: MatchFilters): MatchScore[] {
@@ -55,29 +75,52 @@ export function matchRecipes(f: MatchFilters): MatchScore[] {
     const coverage = core.length === 0 ? 0 : coreHave.length / core.length;
     if (coverage < 0.5) continue; // need at least half the core ingredients
 
+    // Recipe-aware substitutions: missing items covered by an owned swap
+    // stop counting against the match (and earn a small bonus).
+    const substitutable = substitutionCover(r, missing, has);
+    const effectiveMissing = missing.length - substitutable.length;
+    const effectiveCoverage = core.length === 0 ? 0 : (coreHave.length + substitutable.length) / core.length;
+
     // Reasons
     const reasons: string[] = [];
-    if (missing.length === 0) reasons.push("You have everything");
-    else reasons.push(`Only ${missing.length} item${missing.length > 1 ? "s" : ""} missing`);
+    if (effectiveMissing === 0) {
+      reasons.push(
+        substitutable.length > 0
+          ? `Everything covered — ${substitutable.length === 1 ? "one swap makes it work" : "swaps make it work"}`
+          : "You have everything",
+      );
+    } else {
+      reasons.push(
+        `Only ${effectiveMissing} item${effectiveMissing > 1 ? "s" : ""} missing`,
+      );
+    }
+    // Name the owned swaps whether or not anything is still missing.
+    for (const subId of substitutable) {
+      const rule = r.substitutions.find((s) => s.missingId === subId);
+      const swapName = rule?.useId ? findIngredientName(rule.useId) : null;
+      const missName = findIngredientName(subId);
+      if (swapName) reasons.push(`${swapName} works instead of ${missName.toLowerCase()}`);
+    }
     if (r.tags.includes("high-protein")) reasons.push("High protein");
     if (r.timeMin <= 15) reasons.push("15-min meal");
 
     // Score
-    let score = coverage * 60; // up to 60 pts for coverage
+    let score = effectiveCoverage * 60; // up to 60 pts for coverage
     if (timeFit) score += 10;
     if (budgetFit) score += 8;
     let intentHits = 0;
     for (const t of r.tags) if (intents.has(t)) { score += 9; intentHits++; }
     if (intentHits >= 2) score += 6;
     if (r.difficulty === "easy") score += 5;
-    if (missing.length === 0) score += 12; // cook-now bonus
+    if (effectiveMissing === 0) score += 12; // cook-now bonus
+    if (substitutable.length > 0) score += 4 * substitutable.length; // swap-aware bonus
     // Protein matters — up to +8 pts, and it breaks ties (high-protein
     // users should never see an 11g omelette above a 35g bhurji).
     const protein = computeNutrition(r, f.servings).protein;
     score += Math.min(8, (protein / 50) * 8);
     if (!budgetFit) score -= 14;
 
-    scores.push({ recipe: r, score, missing, missingCount: missing.length, reasons, protein });
+    scores.push({ recipe: r, score, missing, missingCount: missing.length, substitutable, reasons, protein });
   }
 
   scores.sort((a, b) => b.score - a.score || b.protein - a.protein);

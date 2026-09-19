@@ -9,7 +9,7 @@
 "use client";
 
 import { VISION_MODEL_FALLBACKS, VISION_TIMEOUT_MS } from "./config";
-import { loadPuter, puterChat, modelSupportsVision, messageOf } from "./puter";
+import { loadPuter, puterChat, modelSupportsVision, messageOf, withPuterSdk } from "./puter";
 import {
   buildVisionSystemPrompt,
   buildVisionUserPrompt,
@@ -36,7 +36,7 @@ export class PuterIngredientVisionService implements IngredientVisionService {
     const started = Date.now();
     logAiEvent("vision_request_started", { hasText: Boolean(req.userText) });
 
-    const puter = await loadPuter();
+    const puter = await withPuterSdk(() => loadPuter());
     if (!puter) {
       logAiEvent("fallback_triggered", { stage: "vision-sdk-unavailable" });
       return null;

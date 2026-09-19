@@ -84,6 +84,7 @@ export const recipeSchema = z.object({
   description: z.string().min(1),
   cuisine: z.string().min(1),
   diet: z.enum(["veg", "egg", "nonveg"]),
+  category: z.enum(["breakfast", "lunch", "dinner", "snack", "drink"]),
   heroEmoji: z.string().min(1),
   timeMin: z.number().int().min(5).max(120),
   difficulty: z.enum(["easy", "medium"]),

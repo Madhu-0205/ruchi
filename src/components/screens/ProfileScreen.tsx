@@ -113,6 +113,7 @@ export default function ProfileScreen() {
 
   const authErrorCopy: Record<AuthFailure, string> = {
     "invalid-credentials": authErrorMessage("invalid-credentials"),
+    "email-not-confirmed": authErrorMessage("email-not-confirmed"),
     "email-taken": authErrorMessage("email-taken"),
     "weak-password": authErrorMessage("weak-password"),
     "rate-limited": authErrorMessage("rate-limited"),

@@ -20,8 +20,9 @@ import { getAssistantService, aiConfigured } from "@/lib/ai";
 import { track } from "@/lib/engine/analytics";
 import { computeCost, computeNutrition } from "@/lib/engine/nutrition";
 import { scaleStepText } from "@/lib/engine/units";
+import { GENERIC_QUESTIONS, fallbackAnswer } from "@/lib/engine/help-fallback";
 import type { AiHelpAnswer } from "@/lib/data/schemas";
-import type { Recipe, RecipeStep } from "@/lib/types";
+import type { RecipeStep } from "@/lib/types";
 
 function useCountdown(minutes?: number) {
   const total = (minutes ?? 0) * 60;
@@ -328,6 +329,11 @@ export default function CookingMode() {
           >
             {isLast ? "I'm done cooking 🎉" : "Next step"}
           </Button>
+          {!isLast && (
+            <Button variant="secondary" onClick={finishCook}>
+              Done
+            </Button>
+          )}
         </div>
         <button
           onClick={() => openHelp("How do I know it's ready?")}
@@ -357,7 +363,11 @@ export default function CookingMode() {
             >
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="text-[17px] font-bold">While you cook</h3>
-                <button onClick={() => setHelpOpen(false)} className="p-1 text-muted">
+                <button
+                  onClick={() => setHelpOpen(false)}
+                  aria-label="Close help"
+                  className="p-1 text-muted"
+                >
                   <X size={18} />
                 </button>
               </div>
@@ -418,6 +428,7 @@ function CompletionView({
   deliveryCost,
   streakDays,
   onHome,
+  onAgain,
 }: {
   recipeName: string;
   protein: number;
@@ -475,6 +486,12 @@ function CompletionView({
         >
           Back to my kitchen
         </Button>
+        <button
+          onClick={onAgain}
+          className="mt-3 w-full max-w-xs rounded-2xl py-3 text-[15px] font-semibold text-cream/70 transition-colors hover:text-cream"
+        >
+          Cook something else
+        </button>
       </div>
     </div>
   );
@@ -489,40 +506,4 @@ function formatClock(sec: number | null): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-const GENERIC_QUESTIONS = [
-  "How do I know it's ready?",
-  "I added too much salt",
-  "I burned it",
-  "Why is this watery?",
-  "I don't have this ingredient",
-  "I don't have this utensil",
-];
-
-function fallbackAnswer(
-  question: string,
-  recipe: Recipe,
-  step: RecipeStep,
-): string {
-  const q = question.toLowerCase();
-  if (q.includes("salt")) return getHelp("fix-too-salty")?.answer ?? "";
-  if (q.includes("burn")) return getHelp("fix-burnt")?.answer ?? "";
-  if (q.includes("watery")) return getHelp("why-watery-curry")?.answer ?? getHelp("fix-watery")?.answer ?? "";
-  if (q.includes("utensil")) return getHelp("utensil-missing")?.answer ?? "";
-  if (q.includes("don't have") || q.includes("substitute") || q.includes("alternative")) {
-    const subs = recipe.substitutions
-      .map((s) => s.message)
-      .join(" ");
-    return `For ${recipe.name}: ${subs || getHelp("substitute")?.answer || "improvise boldly."}`;
-  }
-  if (q.includes("ready") || q.includes("done")) {
-    return `For this step: ${step.lookFor} ${step.safety ? `Safety: ${step.safety}` : ""}`.trim();
-  }
-  if (q.includes("flame") || q.includes("heat")) return getHelp("medium-flame")?.answer ?? "";
-  if (q.includes("protein")) return getHelp("protein-lower")?.answer ?? "";
-  // step-specific curated help
-  for (const id of step.helpIds ?? []) {
-    const h = getHelp(id);
-    if (h) return h.answer;
-  }
-  return getHelp("is-it-cooked")?.answer ?? "";
-}
+// ── Help fallback lives in lib/engine/help-fallback.ts (pure + tested) ──

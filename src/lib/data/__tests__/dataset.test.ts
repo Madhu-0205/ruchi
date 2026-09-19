@@ -3,6 +3,7 @@
 // tests make it fail loudly instead.
 
 import { describe, expect, it } from "vitest";
+import { computeNutrition, computeCostPerServing } from "@/lib/engine/nutrition";
 import { INGREDIENTS, findIngredient, isAssumedPantry, ASSUMED_PANTRY } from "@/lib/data/ingredients";
 import { getRecipe, RECIPES, RECIPE_COUNT } from "@/lib/data/recipes";
 import { HELP_LIBRARY } from "@/lib/data/help";
@@ -117,5 +118,66 @@ describe("recipe dataset", () => {
   it("getRecipe resolves by id", () => {
     expect(getRecipe("paneer-egg-bhurji")?.name).toBe("Paneer Egg Bhurji");
     expect(getRecipe("does-not-exist")).toBeUndefined();
+  });
+
+  // ── Production-readiness invariants ─────────────────────────
+  // The UI renders engine-computed values; a declared snapshot that drifts
+  // from the engine is a lie on screen. These tests keep them locked.
+
+  it("declared nutrition matches the engine for every recipe", () => {
+    for (const r of RECIPES) {
+      const n = computeNutrition(r, r.servings);
+      expect(r.nutritionPerServing.calories, `${r.id} calories`).toBe(n.calories);
+      expect(r.nutritionPerServing.protein, `${r.id} protein`).toBe(n.protein);
+      expect(r.nutritionPerServing.carbs, `${r.id} carbs`).toBe(n.carbs);
+      expect(r.nutritionPerServing.fat, `${r.id} fat`).toBe(n.fat);
+    }
+  });
+
+  it("tags are derived, not decorative", () => {
+    for (const r of RECIPES) {
+      const n = computeNutrition(r, r.servings);
+      const cost = computeCostPerServing(r, r.servings);
+      expect(r.tags.includes("high-protein"), `${r.id} high-protein (${n.protein}g)`).toBe(n.protein >= 20);
+      expect(r.tags.includes("budget"), `${r.id} budget (₹${cost})`).toBe(cost <= 35);
+      expect(r.tags.includes("quick"), `${r.id} quick (${r.timeMin}min)`).toBe(r.timeMin <= 20);
+    }
+  });
+
+  it("per-serving estimates stay in honest ranges", () => {
+    for (const r of RECIPES) {
+      const n = computeNutrition(r, r.servings);
+      const cost = computeCostPerServing(r, r.servings);
+      // 67 kcal masala-chaas is honest — a drink, not a meal
+      expect(n.calories, `${r.id} kcal`).toBeGreaterThanOrEqual(60);
+      expect(n.calories, `${r.id} kcal`).toBeLessThanOrEqual(950);
+      expect(n.protein, `${r.id} protein`).toBeGreaterThanOrEqual(2);
+      expect(cost, `${r.id} cost`).toBeGreaterThanOrEqual(10);
+      expect(cost, `${r.id} cost`).toBeLessThanOrEqual(220);
+    }
+  });
+
+  it("pressure-cooker steps carry a steam-release safety note", () => {
+    for (const r of RECIPES) {
+      for (const s of r.steps) {
+        if (/pressure-cook|pressure cook|\bwhistle/i.test(`${s.title} ${s.text}`)) {
+          expect(
+            s.safety,
+            `${r.id}/${s.id} must warn about pressure release`,
+          ).toBeDefined();
+          expect(s.safety?.length ?? 0).toBeGreaterThan(20);
+        }
+      }
+    }
+  });
+
+  it("shallow-fry steps warn about water-in-oil spatter", () => {
+    for (const r of RECIPES) {
+      for (const s of r.steps) {
+        if (/shallow-fry|shallow fry/i.test(`${s.title} ${s.text}`)) {
+          expect(s.safety, `${r.id}/${s.id} must warn about spatter`).toBeDefined();
+        }
+      }
+    }
   });
 });

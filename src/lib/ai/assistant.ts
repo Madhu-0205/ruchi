@@ -9,7 +9,7 @@
 "use client";
 
 import { TEXT_MODEL_FALLBACKS, TEXT_TIMEOUT_MS } from "./config";
-import { loadPuter, puterChat, messageOf } from "./puter";
+import { loadPuter, puterChat, messageOf, withPuterSdk } from "./puter";
 import { ASSISTANT_SYSTEM_PROMPT, buildAssistantUserPrompt } from "./prompts";
 import { parseAssistantReply } from "./schemas";
 import { logAiEvent } from "./observability";
@@ -29,7 +29,7 @@ export class PuterCookingAssistantService implements CookingAssistantService {
   ): Promise<CookingAssistantReply | null> {
     logAiEvent("assistant_request", { step: ctx.stepIndex + 1 });
 
-    const puter = await loadPuter();
+    const puter = await withPuterSdk(() => loadPuter());
     if (!puter) {
       logAiEvent("fallback_triggered", { stage: "assistant-sdk-unavailable" });
       return null;

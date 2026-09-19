@@ -181,14 +181,14 @@ export default function HomeScreen() {
             {inventoryIds.length > 0 && (
               <button
                 onClick={() => useRuchi.getState().clearKitchen()}
-                className="text-[13px] font-medium text-muted hover:text-ink"
+                className="-my-2 py-2 text-[13px] font-medium text-muted hover:text-ink"
               >
                 Clear
               </button>
             )}
             <button
               onClick={() => setShowSearch((v) => !v)}
-              className="text-[13px] font-semibold text-flame"
+              className="-my-2 py-2 text-[13px] font-semibold text-flame"
             >
               {showSearch ? "Done" : "Search all"}
             </button>
@@ -268,7 +268,10 @@ export default function HomeScreen() {
                   className="inline-flex items-center gap-1.5 rounded-full bg-ink px-3 py-1.5 text-[13px] font-semibold text-cream"
                 >
                   {ing?.name ?? item.ingredientId}
-                  <button onClick={() => removeItem(item.ingredientId)}>
+                  <button
+                    onClick={() => removeItem(item.ingredientId)}
+                    aria-label={`Remove ${ing?.name ?? item.ingredientId}`}
+                  >
                     <X size={13} className="opacity-70 hover:opacity-100" />
                   </button>
                 </span>

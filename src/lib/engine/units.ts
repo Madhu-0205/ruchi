@@ -70,6 +70,11 @@ export function formatQuantity(
     return `${num} ${size}`;
   }
   if (ri.unit === "count") return formatNumber(qty);
+  // Spoon measures only exist in ¼-steps in a real kitchen — always snap.
+  // "0.4 tsp turmeric" is machine talk; "½ tsp" is what a cookbook prints.
+  if (ri.unit === "tsp" || ri.unit === "tbsp") {
+    return `${formatNumber(Math.round(qty * 4) / 4)} ${UNIT_LABEL[ri.unit]}`;
+  }
   return `${formatNumber(qty)} ${UNIT_LABEL[ri.unit]}`;
 }
 

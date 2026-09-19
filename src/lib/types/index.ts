@@ -35,6 +35,9 @@ export type Intent =
   | "comfort"
   | "spicy";
 
+/** Meal slot — drives Discover sections and search. */
+export type RecipeCategory = "breakfast" | "lunch" | "dinner" | "snack" | "drink";
+
 export type Equipment = "stove" | "kadai" | "pan" | "pot" | "pressure_cooker" | "oven" | "microwave" | "none";
 
 export type HeatLevel = "off" | "low" | "medium-low" | "medium" | "medium-high" | "high";
@@ -99,6 +102,7 @@ export interface Recipe {
   description: string; // one-liner, RUCHI voice
   cuisine: string;
   diet: DietTag;
+  category: RecipeCategory; // meal slot (breakfast/lunch/dinner/snack/drink)
   heroEmoji: string; // no external images in MVP
   timeMin: number; // total, includes prep
   difficulty: "easy" | "medium";

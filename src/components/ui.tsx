@@ -83,10 +83,29 @@ export function Card({
   className?: string;
   onClick?: () => void;
 }) {
+  // Clickable cards must stay keyboard-accessible: role + Enter/Space + focus
+  // ring, without changing the visual language (same div, same classes).
+  if (onClick) {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onClick}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onClick();
+          }
+        }}
+        className={`rounded-3xl bg-surface border border-line cursor-pointer hover:border-ink/25 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink ${className}`}
+      >
+        {children}
+      </div>
+    );
+  }
   return (
     <div
-      onClick={onClick}
-      className={`rounded-3xl bg-surface border border-line ${onClick ? "cursor-pointer hover:border-ink/25 transition-colors" : ""} ${className}`}
+      className={`rounded-3xl bg-surface border border-line ${className}`}
     >
       {children}
     </div>

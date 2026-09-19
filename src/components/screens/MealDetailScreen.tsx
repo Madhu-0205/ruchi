@@ -165,15 +165,26 @@ export default function MealDetailScreen() {
 
         {missing.length > 0 && (
           <Card className="mt-3 border-dashed p-4">
-            <p className="text-[14px] font-semibold">You&apos;re missing {missing.length} things.</p>
+            <p className="text-[14px] font-semibold">
+              {missing.length === 1 ? "You're missing 1 thing." : `You're missing ${missing.length} things.`}
+            </p>
             <div className="mt-2 space-y-2">
               {missing.map((mid) => {
                 const sub = recipe.substitutions.find((s) => s.missingId === mid);
                 const name = findIngredient(mid)?.name ?? mid;
+                const swapOwned = sub?.useId ? inventoryIds.includes(sub.useId) : false;
+                const swapName = sub?.useId ? findIngredient(sub.useId)?.name : undefined;
                 return (
                   <div key={mid} className="text-[13px] leading-relaxed text-muted">
                     <span className="font-semibold text-ink">{name}:</span>{" "}
-                    {sub?.message ?? "Check the fridge again — or improvise boldly."}
+                    {swapOwned && swapName && sub ? (
+                      <>
+                        You have <span className="font-semibold text-sage">{swapName.toLowerCase()}</span> —{" "}
+                        {sub.message}
+                      </>
+                    ) : (
+                      sub?.message ?? "Check the fridge again — or improvise boldly."
+                    )}
                   </div>
                 );
               })}
@@ -228,7 +239,7 @@ export default function MealDetailScreen() {
         <Button
           className="w-full py-4 text-base shadow-lg shadow-ink/15"
           onClick={() => {
-            useRuchi.getState().setPrefs({ defaultServings: people, budget: 100 });
+            useRuchi.getState().setPrefs({ defaultServings: people });
             go("cooking", { recipeId: recipe.id });
           }}
         >

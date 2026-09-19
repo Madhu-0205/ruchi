@@ -14,7 +14,10 @@
 
 create table if not exists public.beta_feedback (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users (id) on delete cascade,
+  -- default auth.uid(): the correct owner id is filled in by the database
+  -- even if a client forgets to send it; RLS still enforces that a row can
+  -- only be written when the id matches the caller's session.
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
   topic text not null check (topic in (
     'recipe', 'ingredients', 'instructions', 'bug', 'confusing', 'general'
   )),
@@ -26,6 +29,11 @@ create index if not exists beta_feedback_recent_idx
   on public.beta_feedback (created_at desc);
 
 alter table public.beta_feedback enable row level security;
+
+-- Drop-then-create guards keep this paste-safe: re-running the migration
+-- never leaves duplicate policies behind.
+drop policy if exists "beta_feedback_insert_own" on public.beta_feedback;
+drop policy if exists "beta_feedback_select_own" on public.beta_feedback;
 
 create policy "beta_feedback_insert_own" on public.beta_feedback
   for insert to authenticated

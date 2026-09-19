@@ -43,9 +43,10 @@ describe("fallbackAnswer — sanity", () => {
 describe("fallbackAnswer — doneness questions", () => {
   it("answers with the step's look-for cue, phrased naturally", () => {
     const a = fallbackAnswer("How do I know it's ready?", recipe, step);
-    expect(a).toContain(step.lookFor);
+    // The cue is the whole answer — no mechanical "For this step:" echo.
+    expect(a).toBe(step.lookFor);
     // No spec-sheet boilerplate: the cue stands on its own.
-    expect(a).not.toMatch(/safety:/i);
+    expect(a).not.toMatch(/safety:|for this step:/i);
   });
 
   it("matches 'done' and 'know' phrasings to the cue", () => {
@@ -63,6 +64,20 @@ describe("fallbackAnswer — substitution questions", () => {
     for (const sub of recipe.substitutions) {
       expect(a).toContain(sub.message);
     }
+  });
+
+  it("single substitution reads as one natural sentence — no name prefix", () => {
+    const oneSub = { ...recipe, substitutions: recipe.substitutions.slice(0, 1) };
+    const a = fallbackAnswer("I don't have this ingredient", oneSub, step);
+    expect(a).toBe(oneSub.substitutions[0]!.message);
+    expect(a).not.toMatch(/^For /);
+  });
+
+  it("multiple substitutions are framed naturally, not echoed", () => {
+    const many = { ...recipe, substitutions: [...recipe.substitutions, ...recipe.substitutions] };
+    const a = fallbackAnswer("I don't have this ingredient", many, step);
+    expect(a).toContain("Here's what works for");
+    for (const sub of many.substitutions) expect(a).toContain(sub.message);
   });
 
   it("falls back to the curated general advice when the recipe has no swaps", () => {

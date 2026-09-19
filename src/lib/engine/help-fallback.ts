@@ -33,15 +33,19 @@ export function fallbackAnswer(
   if (q.includes("utensil")) return getHelp("utensil-missing")?.answer ?? "";
   if (q.includes("don't have") || q.includes("substitute") || q.includes("alternative")) {
     const subs = recipe.substitutions.map((s) => s.message);
-    return subs.length > 0
-      ? `For ${recipe.name}: ${subs.join(" ")}`
-      : (getHelp("substitute")?.answer ??
-          "No listed swap for this one — the meal screen's substitutions card has the honest options.");
+    // Each substitution message is already a complete, human sentence —
+    // return it as one. Only frame a list when there are several to name.
+    return subs.length === 1
+      ? subs[0]!
+      : subs.length > 1
+        ? `Here's what works for ${recipe.name}: ${subs.join(" ")}`
+        : (getHelp("substitute")?.answer ??
+            "No listed swap for this one — the meal screen's substitutions card has the honest options.");
   }
   if (q.includes("ready") || q.includes("done") || q.includes("know")) {
-    // The step's look-for cue IS the honest doneness answer — delivered
-    // like a person would say it, not prefixed with "Safety:" boilerplate.
-    return `For this step: ${step.lookFor}`;
+    // The step's look-for cue is the honest doneness answer — a complete
+    // human sentence already; let it stand on its own without a prefix.
+    return step.lookFor;
   }
   if (q.includes("flame") || q.includes("heat")) return getHelp("medium-flame")?.answer ?? "";
   if (q.includes("protein")) return getHelp("protein-lower")?.answer ?? "";

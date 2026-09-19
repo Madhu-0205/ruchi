@@ -5,6 +5,7 @@ import { CloudUpload, Loader2, LogOut } from "lucide-react";
 import { Button, Card, Note, Pill, SectionTitle, Stat } from "@/components/ui";
 import { useRuchi, streak, weeklyProgress } from "@/lib/store";
 import { authAvailable, authErrorMessage, type AuthFailure } from "@/lib/auth/supabase-auth";
+import { insertBetaFeedback, type FeedbackTopic } from "@/lib/auth/supabase-data";
 import { buildNudges, weeklySummaryLine } from "@/lib/engine/nudge";
 import type {
   BudgetPerMeal,
@@ -36,6 +37,24 @@ const GOALS: { id: FitnessGoal; label: string }[] = [
 
 type Mode = "sign-in" | "sign-up";
 
+const FEEDBACK_TOPICS: { id: FeedbackTopic; label: string }[] = [
+  { id: "recipe", label: "Recipe problem" },
+  { id: "ingredients", label: "Ingredient issue" },
+  { id: "instructions", label: "Instruction issue" },
+  { id: "bug", label: "App bug" },
+  { id: "confusing", label: "Confusing screen" },
+  { id: "general", label: "General" },
+];
+
+const FEEDBACK_PLACEHOLDER: Record<FeedbackTopic, string> = {
+  recipe: "Which recipe? What was wrong — quantity, time, taste?",
+  ingredients: "What did the app miss or get wrong about your ingredients?",
+  instructions: "Which step was unclear or didn't match reality?",
+  bug: "What did you tap, and what happened instead?",
+  confusing: "Which screen confused you, and what did you expect?",
+  general: "Anything else — good or bad.",
+};
+
 export default function ProfileScreen() {
   const {
     name,
@@ -59,6 +78,11 @@ export default function ProfileScreen() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [feedbackTopic, setFeedbackTopic] = useState<FeedbackTopic>("general");
+  const [feedbackText, setFeedbackText] = useState("");
+  const [feedbackStatus, setFeedbackStatus] = useState<
+    "idle" | "sending" | "sent" | "error" | "unconfigured"
+  >("idle");
   const configured = authAvailable();
 
   const week = useMemo(() => weeklyProgress({ history }), [history]);
@@ -67,6 +91,22 @@ export default function ProfileScreen() {
   const lastCookedAt = useRuchi((s) => s.lastCookedAt);
   const lastNudges = useRuchi((s) => s.lastNudges);
   const upsertNudges = useRuchi((s) => s.upsertNudges);
+
+  const submitFeedback = async () => {
+    setFeedbackStatus("sending");
+    const result = await insertBetaFeedback(
+      feedbackTopic,
+      feedbackText,
+    );
+    if (result.ok) {
+      setFeedbackText("");
+      setFeedbackStatus("sent");
+    } else {
+      setFeedbackStatus(
+        result.reason === "unconfigured" ? "unconfigured" : "error",
+      );
+    }
+  };
 
   // Nudge inbox: generated once per visit; cooldowns live in buildNudges.
   useEffect(() => {
@@ -421,6 +461,68 @@ export default function ProfileScreen() {
           </div>
         )}
       </div>
+
+      {/* Beta feedback (signed-in only) — minimal, append-only, no personal data */}
+      {account && (
+        <div className="mt-8">
+          <SectionTitle>Beta feedback</SectionTitle>
+          <Card className="p-5">
+            <p className="text-sm text-muted">
+              Something off? A recipe, an instruction, a confusing screen — tell us
+              and it gets fixed. No personal data is collected.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {FEEDBACK_TOPICS.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setFeedbackTopic(t.id)}
+                  className={`rounded-full border px-3 py-2 text-[13px] font-medium transition-colors ${
+                    feedbackTopic === t.id
+                      ? "border-ink bg-ink text-surface"
+                      : "border-line text-ink hover:border-ink/40"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <textarea
+              value={feedbackText}
+              onChange={(e) => setFeedbackText(e.target.value.slice(0, 1000))}
+              placeholder={FEEDBACK_PLACEHOLDER[feedbackTopic] ?? "Tell us what happened…"}
+              rows={3}
+              maxLength={1000}
+              className="mt-3 w-full resize-none rounded-2xl border border-line bg-surface p-3 text-[14px] leading-relaxed outline-none focus:border-ink/50"
+            />
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <span className="text-[12px] text-muted">
+                {feedbackStatus === "sent"
+                  ? "Got it — thank you. 🙏"
+                  : feedbackStatus === "error"
+                    ? "Couldn't send just now. Check your connection and try again."
+                    : feedbackStatus === "unconfigured"
+                      ? "Feedback needs a Supabase-backed account."
+                      : `${feedbackText.trim().length}/1000`}
+              </span>
+              <Button
+                onClick={submitFeedback}
+                disabled={
+                  feedbackStatus === "sending" ||
+                  feedbackText.trim().length < 3 ||
+                  feedbackText.trim().length > 1000
+                }
+              >
+                {feedbackStatus === "sending" ? (
+                  <Loader2 size={15} className="animate-spin" />
+                ) : (
+                  "Send"
+                )}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
 
       <p className="mb-4 mt-8 text-center text-[12px] leading-relaxed text-muted">
         RUCHI gives estimates, not medical or financial advice.

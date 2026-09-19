@@ -15,6 +15,7 @@ const h = vi.hoisted(() => {
       profiles: [] as Record<string, unknown>[],
       completed_meals: [] as Record<string, unknown>[],
       cooking_streaks: [] as Record<string, unknown>[],
+      beta_feedback: [] as Record<string, unknown>[],
     },
     rpcCalls: [] as { fn: string; args: unknown }[],
     failNextRpc: false,
@@ -81,6 +82,7 @@ import {
   fetchCompletedMeals,
   fetchProfile,
   fetchStreak,
+  insertBetaFeedback,
   insertCompletedMeals,
   recordStreakDay,
   upsertProfile,
@@ -236,4 +238,36 @@ describe("streak RPC", () => {
       expect(r.data.longest).toBe(7);
       expect(r.data.lastCompletedLocalDate).toBe("2026-09-16");
     }  });
+});
+
+describe("beta feedback", () => {
+  it("inserts with the SIGNED-IN user's id only — client cannot choose ownership", async () => {
+    h.state.rows.beta_feedback = [];
+    const r = await insertBetaFeedback("recipe", "Onion quantity was way off for 2 servings.");
+    expect(r.ok).toBe(true);
+    expect(h.state.rows.beta_feedback).toHaveLength(1);
+    expect(h.state.rows.beta_feedback[0]!.user_id).toBe("user-1");
+  });
+
+  it("rejects anonymous use and out-of-range messages before any network call", async () => {
+    h.state.rows.beta_feedback = [];
+    h.state.user = null;
+    expect((await insertBetaFeedback("bug", "Signed out — must fail")).ok).toBe(false);
+    h.state.user = { id: "user-1" };
+    expect((await insertBetaFeedback("bug", "ab")).ok).toBe(false); // < 3 chars
+    expect((await insertBetaFeedback("bug", "x".repeat(1001))).ok).toBe(false);
+    expect(h.state.rows.beta_feedback).toHaveLength(0);
+  });
+
+  it("propagates insert failure without leaking details", async () => {
+    h.state.rows.beta_feedback = [];
+    const orig = h.client.from;
+    h.client.from = (() => ({
+      insert: async () => ({ error: { message: "rls violation" } }),
+    })) as unknown as typeof h.client.from;
+    const r = await insertBetaFeedback("general", "Network hiccup test message.");
+    h.client.from = orig;
+    expect(r).toEqual({ ok: false, reason: "error" });
+    expect(h.state.rows.beta_feedback).toHaveLength(0);
+  });
 });

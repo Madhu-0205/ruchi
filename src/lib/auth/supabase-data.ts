@@ -104,6 +104,42 @@ export async function upsertProfile(patch: {
   return error ? fail("error") : { ok: true, data: null };
 }
 
+// ── Beta feedback (controlled beta, signed-in only) ─────────
+
+export type FeedbackTopic =
+  | "recipe"
+  | "ingredients"
+  | "instructions"
+  | "bug"
+  | "confusing"
+  | "general";
+
+/**
+ * Append one feedback row. The database (RLS + check constraints) is the
+ * authority: only the signed-in user's own id may be attached, topics are
+ * whitelisted, and the message must be 3–1000 characters. No other
+ * personal data is collected.
+ */
+export async function insertBetaFeedback(
+  topic: FeedbackTopic,
+  message: string,
+): Promise<DataResult<null>> {
+  const supabase = getSupabase();
+  if (!supabase) return fail("unconfigured");
+  const user = (await supabase.auth.getUser()).data.user;
+  if (!user) return fail("error");
+  const trimmed = message.trim();
+  if (trimmed.length < 3 || trimmed.length > 1000) return fail("error");
+  const { error } = await supabase.from("beta_feedback").insert([
+    {
+      user_id: user.id,
+      topic,
+      message: trimmed,
+    },
+  ]);
+  return error ? fail("error") : { ok: true, data: null };
+}
+
 // ── Completed meals ──────────────────────────────────────────
 
 /** Insert completed meals. Accepts the store's MealHistoryEntry directly. */

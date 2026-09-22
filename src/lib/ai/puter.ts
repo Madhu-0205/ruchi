@@ -47,6 +47,7 @@ let cached: PuterClient | null = null;
 let loadPromise: Promise<PuterClient | null> | null = null;
 
 // ── Auth-failure latch ──────────────────────────────────────
+// (see also `ensurePuterSession` below — the official temp-user path)
 // In environments where Puter's sign-in popup can't complete (embedded
 // webviews, blocked popups), every AI call would re-open the consent
 // dialog and burn its full timeout. After repeated timeout-aborts while
@@ -157,6 +158,8 @@ export function resetPuterForTests(): void {
   firstAccess = null;
   sdkImported = false;
   sdkImportAllowed = false;
+  tempSessionState = "none";
+  lastAuthFailure = null;
 }
 
 export function isPuterLikelyAvailable(): boolean {
@@ -267,6 +270,11 @@ export async function puterChat(
 //   extension), NOT an app-side problem.
 
 const AUTH_TIMEOUT_MS = 100_000; // popup sign-in is human-paced; no artificial rush
+// Temp-user creation expects NO human: puter.com should resolve the popup
+// itself within seconds. If it hasn't settled quickly, the popup is stuck
+// (blank render, blocked webview) — fail fast to the honest fallback
+// instead of hanging a blank window in front of the user.
+const TEMP_AUTH_TIMEOUT_MS = 30_000;
 
 /** Classification of the last failed sign-in — drives honest UI copy. */
 export type AuthFailureKind = "blocked" | "cancelled" | "stalled" | "error";
@@ -288,13 +296,24 @@ export async function puterSignIn(opts?: {
     lastAuthFailure = "error";
     return null;
   }
+  // Already holding a valid session (real or temporary user): report it
+  // instead of opening any popup — an established session must never be
+  // re-prompted.
+  if (puter.auth.isSignedIn?.()) {
+    const existing = await puterGetUser();
+    if (existing?.username) return existing;
+  }
   const startedAt = Date.now();
-  logAiEvent("auth_start", { ...authStateSnapshot() });
+  const isTempAttempt = Boolean(opts?.attempt_temp_user_creation);
+  logAiEvent("auth_start", {
+    tempUser: isTempAttempt,
+    ...authStateSnapshot(),
+  });
   try {
     const controller = new AbortController();
     const timer = setTimeout(
       () => controller.abort(new Error("auth-timeout")),
-      AUTH_TIMEOUT_MS,
+      isTempAttempt ? TEMP_AUTH_TIMEOUT_MS : AUTH_TIMEOUT_MS,
     );
     const timeoutPromise = new Promise<null>((resolve) => {
       controller.signal.addEventListener("abort", () => resolve(null), { once: true });
@@ -356,6 +375,71 @@ export async function puterSignIn(opts?: {
     logAiEvent("auth_failure", { reason: "exception", error: messageOf(err) });
     lastAuthFailure = "error";
     return null;
+  }
+}
+
+// ── Temporary-user session (official mechanism) ─────────────
+//
+// Puter's official browser architecture requires SOME authenticated
+// identity for `puter.ai.*` calls — unauthenticated requests make the SDK
+// open its implicit-consent popup. For an anonymous, first-time visitor
+// that popup is a manual login/signup screen, which RUCHI must never show
+// as the path to image analysis.
+//
+// The official escape hatch is `auth.signIn({ attempt_temp_user_creation:
+// true })` (docs.puter.com/Auth/signIn): the popup resolves itself by
+// creating a temporary guest identity WITHOUT any user interaction — no
+// login form, no signup form, no password, no email. Puter's own user-
+// pays model bills that temp identity against its own free allowance, so
+// the RUCHI developer's Puter bill stays $0.
+//
+// Session establishment runs ONLY inside explicit AI actions (Analyze
+// click, cooking help), never on page load, and never re-prompts when a
+// session already exists.
+let tempSessionState: "none" | "pending" | "ready" | "failed" = "none";
+
+/**
+ * Establish a Puter session without any visible login/signup, using the
+ * official temporary-user mechanism. Must be called from explicit AI
+ * actions only (inside withPuterSdk).
+ *
+ * - No session → silently create a temporary user (no user interaction).
+ * - Session exists → reuse it, never re-prompt.
+ * - Temp creation fails (blocked webview, popup-less env) → report and
+ *   let the caller fall back gracefully. NO manual sign-in is attempted
+ *   as a "fix" — that would surface a Puter login screen.
+ */
+export async function ensurePuterSession(): Promise<
+  { ok: true; user: PuterUser } | { ok: false; reason: "unavailable" | "temp-user-failed" }
+> {
+  const puter = await loadPuter();
+  if (!puter?.auth) return { ok: false, reason: "unavailable" };
+
+  // Already authenticated (returning Puter user or prior temp user):
+  // reuse silently.
+  if (puter.auth.isSignedIn?.()) {
+    const user = await puterGetUser();
+    if (user?.username) {
+      tempSessionState = "ready";
+      latchUntil = 0;
+      unsignedTimeoutStreak = 0;
+      logAiEvent("auth_success", { stage: "session-reuse", username: user.username });
+      return { ok: true, user };
+    }
+  }
+
+  if (tempSessionState === "pending") return { ok: false, reason: "temp-user-failed" };
+  tempSessionState = "pending";
+  try {
+    // OFFICIAL mechanism: auto-create a temporary user. The popup (when
+    // one is used at all) resolves itself without user interaction.
+    const user = await puterSignIn({ attempt_temp_user_creation: true });
+    tempSessionState = user ? "ready" : "failed";
+    return user
+      ? { ok: true, user }
+      : { ok: false, reason: "temp-user-failed" };
+  } finally {
+    if (tempSessionState === "pending") tempSessionState = "none";
   }
 }
 

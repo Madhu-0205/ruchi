@@ -9,7 +9,14 @@
 "use client";
 
 import { VISION_MODEL_FALLBACKS, VISION_TIMEOUT_MS } from "./config";
-import { loadPuter, puterChat, modelSupportsVision, messageOf, withPuterSdk } from "./puter";
+import {
+  ensurePuterSession,
+  loadPuter,
+  puterChat,
+  modelSupportsVision,
+  messageOf,
+  withPuterSdk,
+} from "./puter";
 import {
   buildVisionSystemPrompt,
   buildVisionUserPrompt,
@@ -39,6 +46,20 @@ export class PuterIngredientVisionService implements IngredientVisionService {
     const puter = await withPuterSdk(() => loadPuter());
     if (!puter) {
       logAiEvent("fallback_triggered", { stage: "vision-sdk-unavailable" });
+      return null;
+    }
+
+    // Officially authenticated identity WITHOUT any visible Puter login:
+    // reuses an existing session, otherwise auto-creates a temporary user
+    // (attempt_temp_user_creation). Runs only because the user explicitly
+    // asked for analysis — never on page load. Failure → graceful fallback
+    // below; no manual Puter sign-in is ever surfaced.
+    const session = await ensurePuterSession();
+    if (!session.ok) {
+      logAiEvent("fallback_triggered", {
+        stage: "vision-auth-unavailable",
+        reason: session.reason,
+      });
       return null;
     }
 

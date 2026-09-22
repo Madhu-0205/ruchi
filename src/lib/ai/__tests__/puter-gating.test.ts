@@ -19,9 +19,12 @@ const fakeClient = vi.hoisted(() => ({
     listModels: vi.fn(async () => []),
   },
   auth: {
+    // SDK contract: signIn resolves once the (self-resolving temp-user or
+    // interactive) popup handshake completes; token persistence is the
+    // SDK's job — hence the isSignedIn toggle below.
     signIn: vi.fn(async () => undefined),
     isSignedIn: vi.fn(() => false),
-    getUser: vi.fn(async () => null),
+    getUser: vi.fn(async (): Promise<{ username: string; is_temp?: boolean } | null> => null),
     signOut: vi.fn(),
   },
 }));
@@ -29,19 +32,27 @@ const fakeClient = vi.hoisted(() => ({
 vi.mock("@heyputer/puter.js", () => ({ puter: fakeClient }));
 
 import {
+  ensurePuterSession,
   loadPuter,
   puterChat,
   puterIsSignedIn,
   puterSdkReady,
   puterSdkState,
   resetPuterForTests,
+  withPuterSdk,
 } from "../puter";
 import { PuterCookingAssistantService } from "../assistant";
+import { PuterIngredientVisionService } from "../vision";
 import { PuterMealRecommendationService } from "../recommendations";
 
 beforeEach(() => {
   resetPuterForTests();
   vi.stubGlobal("window", {}); // node env: simulate browser presence
+  // mockClear/reset clears CALLS but not implementations set below, so
+  // every test starts from the fake's documented defaults.
+  fakeClient.auth.isSignedIn.mockReset().mockReturnValue(false);
+  fakeClient.auth.getUser.mockReset().mockResolvedValue(null);
+  fakeClient.auth.signIn.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -91,7 +102,12 @@ describe("Puter SDK gating (no passive authorization)", () => {
     // After an established client, even passive callers reuse it — nothing
     // re-prompts, nothing re-imports.
     expect(await loadPuter()).toBe(fakeClient);
-    expect(fakeClient.auth.signIn).not.toHaveBeenCalled();
+    // The ONLY auth call an explicit action may make is the official
+    // temporary-user creation (no visible login/signup) — never a normal
+    // interactive sign-in.
+    expect(fakeClient.auth.signIn).toHaveBeenCalledWith(
+      expect.objectContaining({ attempt_temp_user_creation: true }),
+    );
   });
 
   it("Home's passive re-rank (rankRecommendations) never imports the SDK", async () => {
@@ -123,11 +139,64 @@ describe("Puter SDK gating (no passive authorization)", () => {
     expect(res).toBeNull();
     expect(fakeClient.ai.chat).not.toHaveBeenCalled();
     expect(puterSdkState().sdkImported).toBe(false);
-  });
-
-  it("auth state reads are side-effect free", () => {
+  });  it("auth state reads are side-effect free", () => {
     expect(puterIsSignedIn()).toBe(false);
     expect(puterSdkState().sdkImported).toBe(false);
+    expect(fakeClient.auth.signIn).not.toHaveBeenCalled();
+  });
+});
+
+describe("temporary-user session (official no-login mechanism)", () => {
+  it("creates a temporary user on demand — no manual signup required", async () => {
+    // Default fake: no session → signIn resolves → temp identity created.
+    fakeClient.auth.getUser.mockResolvedValue({ username: "user-x", is_temp: true });
+    const session = await withPuterSdk(() => ensurePuterSession());
+    expect(session).toEqual({
+      ok: true,
+      user: expect.objectContaining({ username: "user-x" }),
+    });
+    expect(fakeClient.auth.signIn).toHaveBeenCalledTimes(1);
+    expect(fakeClient.auth.signIn).toHaveBeenCalledWith(
+      expect.objectContaining({ attempt_temp_user_creation: true }),
+    );
+  });
+
+  it("reuses an existing session without any auth call", async () => {
+    fakeClient.auth.isSignedIn.mockReturnValue(true);
+    fakeClient.auth.getUser.mockResolvedValue({ username: "returning-user", is_temp: false });
+    const session = await withPuterSdk(() => ensurePuterSession());
+    expect(session.ok).toBe(true);
+    if (session.ok) expect(session.user.username).toBe("returning-user");
+    expect(fakeClient.auth.signIn).not.toHaveBeenCalled();
+  });
+
+  it("failed temp-user creation reports honestly — never falls back to interactive login", async () => {
+    fakeClient.auth.signIn.mockRejectedValue({ error: "popup_blocked" });
+    const session = await withPuterSdk(() => ensurePuterSession());
+    expect(session).toEqual({ ok: false, reason: "temp-user-failed" });
+    // Exactly ONE attempt: no manual sign-in retry, no loop, no popup storm.
+    expect(fakeClient.auth.signIn).toHaveBeenCalledTimes(1);
+  });
+
+  it("vision analysis establishes the temp session automatically on explicit Analyze", async () => {
+    fakeClient.auth.getUser.mockResolvedValue({ username: "user-x", is_temp: true });
+    const vision = new PuterIngredientVisionService();
+    const result = await vision.detectIngredients({
+      imageDataUrl: "data:image/png;base64,x",
+    });
+    // Default fake chat returns non-JSON "ok" → invalid-json on both models
+    // → null result. The point is the auth contract, not the payload.
+    expect(result).toBeNull();
+    expect(fakeClient.auth.signIn).toHaveBeenCalledWith(
+      expect.objectContaining({ attempt_temp_user_creation: true }),
+    );
+  });
+
+  it("an established session suppresses redundant temp-user attempts", async () => {
+    fakeClient.auth.isSignedIn.mockReturnValue(true);
+    fakeClient.auth.getUser.mockResolvedValue({ username: "user-x", is_temp: true });
+    const vision = new PuterIngredientVisionService();
+    await vision.detectIngredients({ imageDataUrl: "data:image/png;base64,x" });
     expect(fakeClient.auth.signIn).not.toHaveBeenCalled();
   });
 });

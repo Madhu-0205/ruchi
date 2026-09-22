@@ -67,6 +67,25 @@ never stores your photo.
 - Refresh while signed in → still signed in
 - Two accounts on one device → each sees only its own meals/streak
 
+### Password reset (new)
+
+1. Signed out → Profile → "Forgot password?" → enter email → "Send reset link"
+2. The app says a link is on its way **if** that address has an account —
+   it never reveals whether the address is registered
+3. Open the email link → RUCHI opens with a "Set a new password" card
+4. Set a new password → "Password updated" → sign in with the new password
+5. Reuse the old password → honest "pick a different password" message
+6. "Back to sign in" from the reset card → app stays fully usable
+
+Prerequisite (project config, one-time): the reset redirect URL (e.g.
+`https://YOUR-DOMAIN/`) must be allow-listed under Supabase → Auth →
+URL Configuration → Redirect URLs, or Supabase will reject the email
+request. Set `NEXT_PUBLIC_PASSWORD_RESET_REDIRECT` in `.env.local` for
+non-root deployments (e.g. preview URLs).
+
+NOTE: "link expired / already used" appears as a generic submit error if
+the link is tapped twice — the fix is simply requesting a fresh link.
+
 ## Offline / failure testing
 
 - Airplane mode: browsing, text ingredients, recommendations, Cooking Mode

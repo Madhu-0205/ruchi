@@ -33,9 +33,13 @@ import type {
 } from "@/lib/types";
 import { track } from "@/lib/engine/analytics";
 import { dayKeyOf } from "@/lib/datetime";
+import { useScreen } from "@/lib/store/screens";
 import {
+  completePasswordReset as sbCompletePasswordReset,
+  consumeRecoveryRedirect as sbConsumeRecoveryRedirect,
   currentUser as sbCurrentUser,
   onAuthChange,
+  requestPasswordReset as sbRequestPasswordReset,
   signIn as sbSignIn,
   signUp as sbSignUp,
   signOut as sbSignOut,
@@ -88,6 +92,31 @@ interface RuchiState {
   syncError: boolean;
   /** Auth failure kind for honest, non-technical error copy. */
   authError: AuthFailure | null;
+  /**
+   * True while the user is inside a password-recovery session (arrived
+   * via a reset email link). In-memory only — never persisted, and
+   * cleared on sign-out or once a new password is set.
+   */
+  recoveryMode: boolean;
+  /**
+   * Email awaiting confirmation after sign-up (when the project has
+   * email confirmation enabled). In-memory only: a fresh page load has
+   * no pending sign-up, so the state is honest by construction.
+   */
+  pendingConfirmationEmail: string | null;
+  /**
+   * True once the user chose to continue without an account from the
+   * welcome screen. In-memory only — anonymous-first: the whole app
+   * works this way, the flag only controls the welcome gate.
+   */
+  guestMode: boolean;
+  /**
+   * True once the initial session check has settled — signed in, signed
+   * out, or Supabase unconfigured. Screens gate auth forms on this so a
+   * late-restoring session never swaps a mounted form out from under
+   * the user's typing. In-memory only: every page load re-checks.
+   */
+  authReady: boolean;
   /** Whose data currently lives in localStorage (see LocalOwner doc). */
   localOwner: LocalOwner;
 
@@ -107,6 +136,20 @@ interface RuchiState {
     email: string,
     password: string,
   ) => Promise<"signed-in" | "needs-email-confirmation" | "failed">;
+  /** Ask Supabase to email a reset link. "sent" = request accepted. */
+  requestPasswordReset: (
+    email: string,
+  ) => Promise<"sent" | "failed">;
+  /** Apply the new password inside a recovery session. */
+  setNewPassword: (newPassword: string) => Promise<"updated" | "failed">;
+  /** Leave the set-new-password card without saving (back to sign-in). */
+  dismissRecovery: () => void;
+  /** Dismiss the "check your email" confirmation notice. */
+  dismissConfirmationNotice: () => void;
+  /** Enter the app without an account (anonymous-first). */
+  enterGuestMode: () => void;
+  /** Detect + consume a recovery redirect once at startup. */
+  consumeRecoveryRedirect: () => void;
   signOut: () => void;
   /** Retry any pending cloud mirror (also used by "Back up now"). */
   syncNow: () => void;
@@ -207,15 +250,28 @@ async function syncMeals(get: () => RuchiState): Promise<void> {
  *   with their cloud data instead (previous user's synced data is safe
  *   in their own account; unsynced-only local data is left behind).
  */
+/**
+ * Land on Home after every auth transition (sign-in, guest entry, page
+ * restore). The screen router is in-memory, so a stale "profile" or
+ * "meal" position must never become the entry screen of a session that
+ * just changed identity.
+ */
+function resetScreenToHome(): void {
+  useScreen.setState({ screen: "home", recipeId: undefined, cameFrom: undefined, history: [] });
+}
+
 async function handleSignedIn(user: AccountUser, localOwner: LocalOwner): Promise<void> {
   const ownsLocal = localOwner === null || localOwner === user.id || localOwner === `anon:${user.id}`;
 
+  // Every signed-in entry point lands on Home — never a stale screen.
+  resetScreenToHome();
+
   if (!ownsLocal) {
-    // Different user's device state → load their cloud data fresh.
+    // Different user's device state → load their cloud data fresh. Set
+    // identity first so the signed-in UI swaps immediately; data follows.
+    useRuchi.setState({ account: user, localOwner: user.id });
     const [profile, meals] = await Promise.all([fetchProfile(), fetchCompletedMeals()]);
     const patch: Partial<RuchiState> = {
-      account: user,
-      localOwner: user.id,
       cloudSyncAt: Date.now(),
       syncError: !(profile.ok && meals.ok),
       inventory: [],
@@ -224,7 +280,7 @@ async function handleSignedIn(user: AccountUser, localOwner: LocalOwner): Promis
     };
     if (profile.ok && profile.data?.prefs) patch.prefs = profile.data.prefs;
     if (profile.ok && profile.data?.displayName) patch.name = profile.data.displayName;
-    useRuchi.setState(patch);
+    if (Object.keys(patch).length > 0) useRuchi.setState(patch);
     return;
   }
 
@@ -266,6 +322,10 @@ export const useRuchi = create<RuchiState>()(
       cloudSyncAt: undefined,
       syncError: false,
       authError: null,
+      authReady: false,
+      recoveryMode: false,
+      pendingConfirmationEmail: null,
+      guestMode: false,
       localOwner: null,
 
       setName: (n) => {
@@ -363,9 +423,50 @@ export const useRuchi = create<RuchiState>()(
           set({ authError: outcome.reason });
           return "failed";
         }
-        if (outcome.status === "needs-email-confirmation") return outcome.status;
+        if (outcome.status === "needs-email-confirmation") {
+          // Honest state: the account row exists, the session does not.
+          // The welcome screen explains the next step until confirmed.
+          set({ pendingConfirmationEmail: outcome.email });
+          return outcome.status;
+        }
         await handleSignedIn(outcome.user, get().localOwner ?? null);
         return "signed-in";
+      },
+
+      requestPasswordReset: async (email) => {
+        set({ authError: null });
+        const outcome = await sbRequestPasswordReset(email);
+        if (outcome.status === "failed") {
+          set({ authError: outcome.reason });
+          return "failed";
+        }
+        return "sent";
+      },
+
+      setNewPassword: async (newPassword) => {
+        set({ authError: null });
+        const outcome = await sbCompletePasswordReset(newPassword);
+        if (outcome.status === "failed") {
+          set({ authError: outcome.reason });
+          return "failed";
+        }
+        // Recovery session has served its purpose.
+        set({ recoveryMode: false });
+        return "updated";
+      },
+
+      consumeRecoveryRedirect: () => {
+        const { recovery } = sbConsumeRecoveryRedirect();
+        if (recovery) set({ recoveryMode: true });
+      },
+
+      dismissRecovery: () => set({ recoveryMode: false, authError: null }),
+
+      dismissConfirmationNotice: () => set({ pendingConfirmationEmail: null }),
+
+      enterGuestMode: () => {
+        resetScreenToHome();
+        set({ guestMode: true });
       },
 
       signOut: () => {
@@ -378,6 +479,9 @@ export const useRuchi = create<RuchiState>()(
           cloudSyncAt: undefined,
           syncError: false,
           authError: null,
+          recoveryMode: false,
+          pendingConfirmationEmail: null,
+          guestMode: false,
           localOwner: prev ? `anon:${prev.id}` : null,
         });
       },
@@ -410,7 +514,14 @@ export const useRuchi = create<RuchiState>()(
 
 let authListenerAttached = false;
 
-if (typeof window !== "undefined" && !authListenerAttached) {
+/**
+ * Attach the auth listener + run the initial session probe. Runs at most
+ * once per page load; flips `authReady` when the check settles so UI can
+ * mount auth forms without risking a mid-typing swap. Split from the
+ * module body so it stays testable in Node (no import side effects).
+ */
+export function initAuthListener(): void {
+  if (authListenerAttached) return;
   authListenerAttached = true;
   onAuthChange((user) => {
     const s = useRuchi.getState();
@@ -429,11 +540,67 @@ if (typeof window !== "undefined" && !authListenerAttached) {
   });
   // Session restore on load: pick up an existing Supabase session even if
   // the listener's INITIAL_SESSION fired before hydration of localOwner.
-  void sbCurrentUser().then((u) => {
-    if (!u) return;
-    const s = useRuchi.getState();
-    if (s.account?.id !== u.id) void handleSignedIn(u, s.localOwner ?? null);
-  });
+  void sbCurrentUser()
+    .then((u) => {
+      if (!u) return;
+      const s = useRuchi.getState();
+      if (s.account?.id !== u.id) void handleSignedIn(u, s.localOwner ?? null);
+    })
+    .finally(() => {
+      // The initial check has settled — signed in, signed out, or the probe
+      // failed. Either way the auth UI can now show its real state.
+      useRuchi.setState({ authReady: true });
+    });
+}
+
+if (typeof window !== "undefined") {
+  initAuthListener();
+  // A recovery email link (Supabase → this origin) enters the app here:
+  // detect + consume once at startup so the Profile card can offer the
+  // set-new-password form. Scrubs tokens from the address bar.
+  useRuchi.getState().consumeRecoveryRedirect();
+}
+
+/** Test hook: allow initAuthListener to run again in a fresh test. */
+export function resetAuthListenerForTests(): void {
+  authListenerAttached = false;
+}
+
+// ── Auth flow state machine (derived, not stored) ────────────
+//
+// One derivation, consumed by the shell. Supabase stays the ONLY auth
+// authority: every state below is computed from flags the Supabase-backed
+// service maintains — no parallel session store, no AI-provider identity.
+//
+// Note on sign-out: RUCHI treats it as an ATOMIC transition — the signOut
+// action clears account + all auth flags in one batched set(), and the
+// Supabase sign-out call itself is fire-and-forget. The machine therefore
+// jumps straight from "authenticated" to "unauthenticated" in a single
+// React commit: no stale private UI can linger, and no transitional flag
+// exists that could wedge the UI if Supabase never emits an event
+// (offline, unconfigured). A separate "signing-out" state would buy
+// nothing here and add a stuck-state risk.
+
+export type AuthFlowState =
+  | "initializing" // app booted; Supabase session check not settled yet
+  | "authenticated" // live Supabase session — show the RUCHI experience
+  | "recovery" // arrived via a password-reset link — set a new password
+  | "confirmation-required" // sign-up done; active after the email link
+  | "unauthenticated-guest" // chose to continue without an account
+  | "unauthenticated"; // welcome + sign-in/sign-up (also: just signed out)
+
+export function deriveAuthFlowState(
+  s: Pick<
+    RuchiState,
+    "authReady" | "account" | "recoveryMode" | "pendingConfirmationEmail" | "guestMode"
+  >,
+): AuthFlowState {
+  if (s.recoveryMode) return "recovery";
+  if (s.authReady && s.account) return "authenticated";
+  if (s.authReady && s.pendingConfirmationEmail) return "confirmation-required";
+  if (s.authReady && s.guestMode) return "unauthenticated-guest";
+  if (s.authReady) return "unauthenticated";
+  return "initializing";
 }
 
 // ── Derived selectors (pure functions over state) ───────────

@@ -13,6 +13,9 @@ import { RECIPES_C } from "./recipes-c";
 import { RECIPES_D } from "./recipes-d";
 import { RECIPES_E } from "./recipes-e";
 import { RECIPES_F } from "./recipes-f";
+import { RECIPES_G } from "./recipes-g";
+import { RECIPES_H } from "./recipes-h";
+import { RECIPES_I } from "./recipes-i";
 
 function validate(recipes: Recipe[]): Recipe[] {
   return recipes.map((r, i) => {
@@ -34,6 +37,9 @@ export const RECIPES: Recipe[] = [
   ...validate(RECIPES_D),
   ...validate(RECIPES_E),
   ...validate(RECIPES_F),
+  ...validate(RECIPES_G),
+  ...validate(RECIPES_H),
+  ...validate(RECIPES_I),
 ];
 
 const byId = new Map(RECIPES.map((r) => [r.id, r]));

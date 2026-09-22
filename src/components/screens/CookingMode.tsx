@@ -11,7 +11,6 @@ import {
   Timer,
   X,
 } from "lucide-react";
-import { Button, Card, Pill } from "@/components/ui";
 import { useScreen } from "@/lib/store/screens";
 import { useRuchi, computeStreak } from "@/lib/store";
 import { getRecipe } from "@/lib/data/recipes";
@@ -174,33 +173,33 @@ export default function CookingMode() {
   const isLast = stepIndex === steps.length - 1;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-cream">
-      {/* Top bar */}
-      <div className="flex items-center justify-between px-4 pt-[max(env(safe-area-inset-top),14px)]">
+    <div className="fixed inset-0 z-50 flex flex-col bg-ink text-cream">
+      {/* Top bar — minimal, quiet */}
+      <div className="flex items-center justify-between px-4 pt-[max(env(safe-area-inset-top),14px)] lg:px-8">
         <button
           onClick={back}
-          className="flex items-center gap-1.5 rounded-full bg-white/70 px-3 py-2 text-[13px] font-semibold text-muted hover:text-ink"
+          className="flex items-center gap-1.5 rounded-full bg-cream/10 px-3.5 py-2 text-[13px] font-semibold text-cream/80 transition-colors hover:bg-cream/15 hover:text-cream"
         >
           <ArrowLeft size={15} /> Exit
         </button>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 rounded-full bg-white/70 p-1">
+          <div className="flex items-center gap-0.5 rounded-full bg-cream/10 p-1">
             {[1, 2, 4].map((n) => (
               <button
                 key={n}
                 onClick={() => setServings(n)}
                 className={`h-7 w-7 rounded-full text-[12px] font-bold transition-colors ${
-                  servings === n ? "bg-ink text-cream" : "text-muted hover:text-ink"
+                  servings === n ? "bg-cream text-ink" : "text-cream/60 hover:text-cream"
                 }`}
                 aria-label={`Cooking for ${n}`}
               >
-                {n === 4 ? "4" : n}
+                {n}
               </button>
             ))}
           </div>
           <button
             onClick={() => openHelp("I don't have this utensil")}
-            className="rounded-full bg-white/70 p-2 text-muted hover:text-ink"
+            className="rounded-full bg-cream/10 p-2 text-cream/80 transition-colors hover:bg-cream/15 hover:text-cream"
             aria-label="Help"
           >
             <CircleHelp size={18} />
@@ -208,153 +207,175 @@ export default function CookingMode() {
         </div>
       </div>
 
-      {/* Progress bar */}
-      <div className="px-4 pt-3">
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-line">
-          <div
-            className="h-full rounded-full bg-flame transition-all duration-300"
-            style={{ width: `${((stepIndex + 1) / steps.length) * 100}%` }}
-          />
-        </div>
-      </div>
-
       {/* Step content */}
-      <div className="flex-1 overflow-y-auto px-4 py-5">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={stepIndex}
-            initial={{ opacity: 0, x: 24 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -24 }}
-            transition={{ duration: 0.18 }}
-          >
-            {step && (
-              <>
-                <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-flame">
-                  Step {stepIndex + 1} · {recipe.name}
-                </p>
-                <h1 className="mt-2 font-display text-[28px] font-bold leading-tight">
-                  {step.title}
-                </h1>
-                <p className="mt-3 text-[17px] leading-relaxed">{scaledText}</p>
+      <div className="flex-1 overflow-y-auto px-4 py-6 lg:px-8">
+        <div className="mx-auto flex h-full max-w-xl flex-col">
+          {/* Progress dots + count */}
+          <div className="mb-5 flex items-center justify-between">
+            <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-flame">
+              Step {stepIndex + 1} of {steps.length}
+            </p>
+            <p className="text-[12px] font-medium text-cream/50">{recipe.name}</p>
+          </div>
 
-                {/* Heat + duration meta */}
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {step.heat && step.heat !== "off" && (
-                    <Pill tone="time">
-                      <Flame size={12} /> {step.heat} flame
-                    </Pill>
-                  )}
+          {/* Progress bar */}
+          <div className="mb-6 flex gap-1.5">
+            {steps.map((_, i) => (
+              <div
+                key={i}
+                className={`h-1 flex-1 rounded-full transition-colors duration-300 ${
+                  i < stepIndex ? "bg-flame" : i === stepIndex ? "bg-flame/60" : "bg-cream/12"
+                }`}
+              />
+            ))}
+          </div>
+
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={stepIndex}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.18 }}
+              className="flex-1"
+            >
+              {step && (
+                <>
+                  <h1 className="font-display text-[30px] font-semibold leading-[1.1] tracking-tight sm:text-[38px]">
+                    {step.title}
+                  </h1>
+                  <p className="mt-4 text-[17px] leading-relaxed text-cream/90 sm:text-[19px] sm:leading-relaxed">
+                    {scaledText}
+                  </p>
+
+                  {/* Heat + duration meta */}
+                  <div className="mt-5 flex flex-wrap gap-2">
+                    {step.heat && step.heat !== "off" && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-flame/15 px-3 py-1.5 text-[13px] font-semibold text-flame">
+                        <Flame size={13} /> {step.heat} heat
+                      </span>
+                    )}
+                    {step.durationMin ? (
+                      <span className="rounded-full bg-cream/10 px-3 py-1.5 text-[13px] font-semibold text-cream/80">
+                        ~{step.durationMin} min
+                      </span>
+                    ) : null}
+                  </div>
+
+                  {/* Timer */}
                   {step.durationMin ? (
-                    <Pill>~{step.durationMin} min</Pill>
-                  ) : null}
-                </div>
-
-                {/* Timer */}
-                {step.durationMin ? (
-                  <Card className="mt-4 p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-flame-soft">
-                          <Timer size={20} className="text-flame-deep" />
+                    <div className="mt-6 rounded-3xl border border-cream/10 bg-cream/[0.06] p-5">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3.5">
+                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-flame/15">
+                            <Timer size={20} className="text-flame" />
+                          </div>
+                          <div>
+                            <p className="text-[12px] font-semibold uppercase tracking-wide text-cream/50">
+                              Suggested timer
+                            </p>
+                            <p className="font-display text-[30px] font-semibold tabular-nums leading-tight">
+                              {formatClock(countdown.remaining)}
+                            </p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-[13px] font-semibold text-muted">Suggested timer</p>
-                          <p className="text-2xl font-bold tabular-nums">
-                            {formatClock(countdown.remaining)}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
                         {countdown.running ? (
                           <button
                             onClick={countdown.pause}
-                            className="rounded-2xl bg-ink px-4 py-2.5 text-[14px] font-semibold text-cream"
+                            className="flex items-center gap-1.5 rounded-2xl bg-cream px-5 py-3 text-[14px] font-bold text-ink transition-colors hover:bg-white"
                           >
-                            <Pause size={15} className="mr-1 inline" /> Pause
+                            <Pause size={15} /> Pause
                           </button>
                         ) : (
                           <button
                             onClick={countdown.start}
-                            className="rounded-2xl bg-ink px-4 py-2.5 text-[14px] font-semibold text-cream"
+                            className="flex items-center gap-1.5 rounded-2xl bg-flame px-5 py-3 text-[14px] font-bold text-white shadow-cta transition-colors hover:bg-flame-deep"
                           >
-                            <Play size={15} className="mr-1 inline" /> Start
+                            <Play size={15} /> Start
                           </button>
                         )}
                       </div>
                     </div>
-                  </Card>
-                ) : null}
+                  ) : null}
 
-                {/* LOOK FOR */}
-                <div className="mt-4 rounded-2xl border border-sage/25 bg-sage-soft p-4">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-sage">
-                    Look for
-                  </p>
-                  <p className="mt-1.5 text-[15px] leading-relaxed text-sage">{step.lookFor}</p>
-                </div>
-
-                {/* Safety */}
-                {step.safety && (
-                  <div className="mt-3 rounded-2xl border border-flame/25 bg-flame-soft p-4">
-                    <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-flame-deep">
-                      Safety
+                  {/* LOOK FOR */}
+                  <div className="mt-5 rounded-3xl border border-sage/30 bg-sage/10 p-5">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-sage">
+                      Look for
                     </p>
-                    <p className="mt-1.5 text-[14px] leading-relaxed text-flame-deep">
-                      {step.safety}
-                      </p>
+                    <p className="mt-1.5 text-[15.5px] leading-relaxed text-cream/90">{step.lookFor}</p>
                   </div>
-                )}
-              </>
-            )}
-          </motion.div>
-        </AnimatePresence>
+
+                  {/* Safety */}
+                  {step.safety && (
+                    <div className="mt-3 rounded-3xl border border-flame/30 bg-flame/10 p-5">
+                      <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-flame">
+                        Safety
+                      </p>
+                      <p className="mt-1.5 text-[14.5px] leading-relaxed text-cream/90">
+                        {step.safety}
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+            </motion.div>
+          </AnimatePresence>
+        </div>
       </div>
 
-      {/* Bottom actions */}
-      <div className="border-t border-line bg-cream px-4 pb-[max(env(safe-area-inset-bottom),16px)] pt-3">
-        <div className="flex gap-3">
-          {stepIndex > 0 && (
-            <Button variant="secondary" onClick={() => setStepIndex((i) => Math.max(0, i - 1))}>
-              Back
-            </Button>
-          )}
-          <Button
-            className="flex-1"
-            onClick={() => {
-              track("cooking_step_completed", { recipeId: recipe.id, step: stepIndex + 1 });
-              if (isLast) finishCook();
-              else setStepIndex((i) => i + 1);
-            }}
+      {/* Bottom actions — quiet zone */}
+      <div className="border-t border-cream/10 bg-ink px-4 pb-[max(env(safe-area-inset-bottom),16px)] pt-3.5 lg:px-8">
+        <div className="mx-auto max-w-xl">
+          <div className="flex gap-3">
+            {stepIndex > 0 && (
+              <button
+                onClick={() => setStepIndex((i) => Math.max(0, i - 1))}
+                className="rounded-2xl border border-cream/15 px-5 py-3 text-[15px] font-semibold text-cream/80 transition-colors hover:bg-cream/10 hover:text-cream"
+              >
+                Back
+              </button>
+            )}
+            <button
+              onClick={() => {
+                track("cooking_step_completed", { recipeId: recipe.id, step: stepIndex + 1 });
+                if (isLast) finishCook();
+                else setStepIndex((i) => i + 1);
+              }}
+              className="flex-1 rounded-2xl bg-flame px-5 py-3 text-[15px] font-bold text-white shadow-cta transition-all hover:bg-flame-deep active:scale-[0.99]"
+            >
+              {isLast ? "I'm done cooking 🎉" : "Next step"}
+            </button>
+            {!isLast && (
+              <button
+                onClick={finishCook}
+                className="rounded-2xl border border-cream/15 px-5 py-3 text-[15px] font-semibold text-cream/80 transition-colors hover:bg-cream/10 hover:text-cream"
+              >
+                Done
+              </button>
+            )}
+          </div>
+          <button
+            onClick={() => openHelp("How do I know it's ready?")}
+            className="mt-2.5 w-full rounded-2xl py-2 text-[13.5px] font-semibold text-flame transition-colors hover:text-flame/80"
           >
-            {isLast ? "I'm done cooking 🎉" : "Next step"}
-          </Button>
-          {!isLast && (
-            <Button variant="secondary" onClick={finishCook}>
-              Done
-            </Button>
-          )}
+            How do I know it&apos;s ready?
+          </button>
         </div>
-        <button
-          onClick={() => openHelp("How do I know it's ready?")}
-          className="mt-2 w-full rounded-2xl py-2 text-[14px] font-semibold text-flame"
-        >
-          How do I know it&apos;s ready?
-        </button>
       </div>
 
       {/* Help sheet */}
       <AnimatePresence>
         {helpOpen && (
           <motion.div
-            className="fixed inset-0 z-[60] flex items-end bg-ink/40"
+            className="fixed inset-0 z-[60] flex items-end bg-black/50"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setHelpOpen(false)}
           >
             <motion.div
-              className="max-h-[75dvh] w-full overflow-y-auto rounded-t-3xl bg-cream p-5 pb-[max(env(safe-area-inset-bottom),20px)]"
+              className="max-h-[75dvh] w-full overflow-y-auto rounded-t-3xl bg-ink border-t border-cream/15 p-5 pb-[max(env(safe-area-inset-bottom),20px)] text-cream"
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
@@ -366,7 +387,7 @@ export default function CookingMode() {
                 <button
                   onClick={() => setHelpOpen(false)}
                   aria-label="Close help"
-                  className="p-1 text-muted"
+                  className="p-1 text-cream/60 hover:text-cream"
                 >
                   <X size={18} />
                 </button>
@@ -378,7 +399,7 @@ export default function CookingMode() {
                     <button
                       key={id}
                       onClick={() => openHelp(h.question)}
-                      className="rounded-full border border-line bg-white px-3.5 py-2 text-[13px] font-semibold"
+                      className="rounded-full border border-cream/15 bg-cream/5 px-3.5 py-2 text-[13px] font-semibold text-cream/90"
                     >
                       {h.question}
                     </button>
@@ -388,24 +409,24 @@ export default function CookingMode() {
                   <button
                     key={q}
                     onClick={() => openHelp(q)}
-                    className="rounded-full border border-line bg-white px-3.5 py-2 text-[13px] font-semibold"
+                    className="rounded-full border border-cream/15 bg-cream/5 px-3.5 py-2 text-[13px] font-semibold text-cream/90"
                   >
                     {q}
                   </button>
                 ))}
               </div>
-              <div className="mt-4 rounded-2xl bg-white p-4">
+              <div className="mt-4 rounded-2xl bg-cream/[0.06] p-4">
                 {helpBusy ? (
-                  <p className="text-[15px] text-muted">Thinking…</p>
+                  <p className="text-[15px] text-cream/60">Thinking…</p>
                 ) : aiHelp ? (
                   <>
                     <p className="text-[15px] leading-relaxed">{aiHelp.answer}</p>
-                    <p className="mt-2 text-[12px] text-muted">
+                    <p className="mt-2 text-[12px] text-cream/50">
                       {aiConfigured() ? "AI-assisted" : "RUCHI's kitchen notes"} · estimates, not gospel
                     </p>
                   </>
                 ) : (
-                  <p className="text-[15px] text-muted">
+                  <p className="text-[15px] text-cream/60">
                     Ask anything about this step — tap a question above.
                   </p>
                 )}
@@ -457,20 +478,20 @@ function CompletionView({
         >
           🎉
         </motion.div>
-        <h1 className="mt-6 font-display text-[30px] font-bold leading-tight">
+        <h1 className="mt-6 font-display text-[32px] font-semibold leading-[1.1] tracking-tight sm:text-[40px]">
           That wasn&apos;t a recipe.
           <br />
           That was dinner.
         </h1>
-        <p className="mt-3 max-w-xs text-[15px] leading-relaxed text-cream/70">
+        <p className="mt-3.5 max-w-xs text-[15px] leading-relaxed text-cream/70">
           {recipeName} — {protein}g protein, {calories} kcal, on the table by you.
         </p>
 
-        <div className="mt-8 w-full max-w-xs rounded-3xl bg-white/10 p-5">
-          <p className="text-[13px] font-semibold uppercase tracking-wider text-cream/60">
+        <div className="mt-8 w-full max-w-xs rounded-3xl bg-cream/[0.08] p-5">
+          <p className="text-[12px] font-semibold uppercase tracking-wider text-cream/60">
             You didn&apos;t just cook dinner
           </p>
-          <p className="mt-2 text-3xl font-bold text-gold-soft">₹{saved} saved</p>
+          <p className="mt-2 font-display text-[32px] font-semibold text-gold-soft">₹{saved} saved</p>
           <p className="mt-2 text-[13px] text-cream/60">
             vs ₹{deliveryCost} delivery. Estimated, but still yours.
           </p>
@@ -480,12 +501,12 @@ function CompletionView({
           <p className="mt-5 text-[14px] font-semibold text-gold-soft">{streakLine}</p>
         )}
 
-        <Button
-          className="mt-8 w-full max-w-xs bg-cream text-ink hover:bg-white"
+        <button
+          className="mt-8 w-full max-w-xs rounded-2xl bg-cream px-5 py-4 text-[15px] font-bold text-ink transition-colors hover:bg-white"
           onClick={onHome}
         >
           Back to my kitchen
-        </Button>
+        </button>
         <button
           onClick={onAgain}
           className="mt-3 w-full max-w-xs rounded-2xl py-3 text-[15px] font-semibold text-cream/70 transition-colors hover:text-cream"
@@ -506,4 +527,4 @@ function formatClock(sec: number | null): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-// ── Help fallback lives in lib/engine/help-fallback.ts (pure + tested) ──
+// paletteFor imported above — keeps the dark room visually tied to the dish.

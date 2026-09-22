@@ -2,9 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Search, X, Sparkles, Camera } from "lucide-react";
-import { Card, Chip, Pill, SectionTitle, Stat } from "@/components/ui";
-import { useRuchi, weeklyProgress, streak } from "@/lib/store";
+import { Camera, Search, Sparkles, X } from "lucide-react";
+import { Card, Chip, EmptyState, SectionTitle } from "@/components/ui";
+import { RuchiLogo } from "@/components/RuchiLogo";
+import { FoodVisual } from "@/components/FoodVisual";
+import { RecipeCard } from "@/components/RecipeCard";
+import { StaggerGroup, StaggerItem } from "@/components/motion";
+import { useRuchi, weeklyProgress } from "@/lib/store";
 import { useScreen } from "@/lib/store/screens";
 import { INGREDIENTS, searchIngredients } from "@/lib/data/ingredients";
 import { recommend, matchRecipes } from "@/lib/engine/match";
@@ -13,19 +17,21 @@ import { computeCostPerServing, computeNutrition } from "@/lib/engine/nutrition"
 import type { Intent, People } from "@/lib/types";
 
 const INTENTS: { id: Intent; label: string }[] = [
-  { id: "high-protein", label: "💪 High Protein" },
-  { id: "healthy", label: "🥗 Healthy" },
-  { id: "quick", label: "⚡ Quick" },
-  { id: "budget", label: "💰 Budget" },
-  { id: "comfort", label: "🍛 Comfort" },
-  { id: "spicy", label: "🌶️ Spicy" },
+  { id: "high-protein", label: "High protein" },
+  { id: "healthy", label: "Healthy" },
+  { id: "quick", label: "Quick" },
+  { id: "budget", label: "Budget" },
+  { id: "comfort", label: "Comfort" },
+  { id: "spicy", label: "Spicy" },
 ];
 
 const TIMES = [10, 15, 30, 45] as const;
 const BUDGETS = [50, 100, 150, 200] as const;
 const PEOPLE: People[] = [1, 2, 3, 4];
 
-const SUGGESTED = ["egg", "paneer", "tomato", "onion", "rice", "bread", "potato", "curd", "capsicum", "toor-dal"];
+const SUGGESTED = [
+  "egg", "paneer", "tomato", "onion", "rice", "bread", "potato", "curd", "capsicum", "toor-dal",
+];
 
 export default function HomeScreen() {
   const inventory = useRuchi((s) => s.inventory);
@@ -108,243 +114,287 @@ export default function HomeScreen() {
   }, [filters, recs, prefs.skill]);
   const shown = aiRecs ?? recs;
   const week = useMemo(() => weeklyProgress({ history }), [history]);
-  const currentStreak = useMemo(() => streak({ history }), [history]);
 
   const has = (id: string) => inventoryIds.includes(id);
   const toggle = (id: string) => (has(id) ? removeItem(id) : addItem(id));
 
-  const stage = inventoryIds.length === 0 ? 0 : 1; // 0 = add ingredients, 1 = choose prefs
+  const hasInventory = inventoryIds.length > 0;
+  const isEmptyKitchen = inventoryIds.length === 0;
 
   return (
-    <div className="pt-6">
-      {/* Hero */}
-      <header className="mb-6">
-        <p className="text-[13px] font-bold uppercase tracking-[0.2em] text-flame">రుచి · RUCHI</p>
-        <h1 className="mt-2 font-display text-[34px] leading-[1.08] font-bold tracking-tight">
-          What&apos;s in your kitchen?
-        </h1>
-        <p className="mt-2 text-[15px] leading-relaxed text-muted">
-          {stage === 0
-            ? "Add what you have. RUCHI handles the rest — what to cook, how much, and how."
-            : "Nice. Now — what are you feeling?"}
-        </p>
-      </header>
-
-      {/* Hero photo entry — the defining interaction */}
-      <motion.button
-        onClick={() => go("scan")}
-        whileTap={{ scale: 0.985 }}
-        className="mb-6 flex w-full items-center gap-4 rounded-3xl bg-ink p-4 text-left text-cream"
-      >
-        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-cream/10">
-          <Camera size={22} strokeWidth={2.2} />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-[16px] font-bold">Show me what you&apos;ve got</span>
-          <span className="mt-0.5 block text-[13px] text-cream/60">
-            Snap your kitchen — RUCHI finds dinner.
-          </span>
-        </span>
-        <motion.span
-          aria-hidden
-          className="text-2xl"
-          animate={{ rotate: [0, -8, 8, 0] }}
-          transition={{ duration: 2.4, repeat: Infinity, repeatDelay: 3, ease: "easeInOut" }}
-        >
-          📸
-        </motion.span>
-      </motion.button>
-
-      {/* Weekly strip (only once they've cooked) */}
-      {week.meals > 0 && (
-        <Card className="mb-6 p-4">
-          <div className="flex items-center justify-between">
-            <Stat value={week.meals} label="cooked this week" />
-            <Stat value={`₹${week.saved}`} label="saved" tone="savings" />
-            <Stat value={`${week.protein}g`} label="protein" tone="protein" />
+    <div className="pt-6 lg:pt-10">
+      {/* ── Hero ─────────────────────────────────────────── */}
+      <section className="lg:grid lg:grid-cols-[1.1fr_0.9fr] lg:items-center lg:gap-12">
+        <header>
+          <div className="flex items-center gap-2.5 lg:hidden">
+            <RuchiLogo size={28} priority />
+            <p className="text-[12px] font-bold uppercase tracking-[0.2em] text-flame">
+              రుచి · RUCHI
+            </p>
           </div>
-          {currentStreak >= 1 && (
-            <div className="mt-3 border-t border-line pt-3 text-[13px] font-semibold text-flame-deep">
-              🔥 {currentStreak}-day streak
-              {currentStreak >= 2
-                ? " — cook again tomorrow to keep it alive."
-                : " — cook again tomorrow to start it properly."}
+          <h1 className="mt-3 font-display text-[36px] font-semibold leading-[1.05] tracking-tight sm:text-[44px] lg:mt-0 lg:text-[56px]">
+            <span className="block">Turn what you have</span>{" "}
+            <span className="block">
+              into{" "}
+              <span className="relative inline-block text-flame">
+                something
+                {/* hand-drawn warmth: underline stroke */}
+                <svg
+                  aria-hidden
+                  viewBox="0 0 110 10"
+                  preserveAspectRatio="none"
+                  className="absolute -bottom-1.5 left-0 h-2 w-full text-flame/45"
+                >
+                  <path
+                    d="M2 7 Q 28 2, 55 6 T 108 5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="3.5"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </span>{" "}
+              worth{" "}
+              <span className="whitespace-nowrap">eating.</span>
+            </span>
+          </h1>
+          <p className="mt-4 max-w-md text-[15px] leading-relaxed text-muted sm:text-[16px] lg:mt-5 lg:text-[17px]">
+            Show RUCHI your ingredients and get meals that actually fit your time, preferences
+            and budget.
+          </p>
+
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row lg:mt-8">
+            <button
+              onClick={() => go("scan")}
+              className="inline-flex items-center justify-center gap-2.5 rounded-2xl bg-flame px-7 py-4 text-[16px] font-bold text-white shadow-cta transition-all duration-200 hover:bg-flame-deep active:scale-[0.98]"
+            >
+              <Camera size={18} strokeWidth={2.2} />
+              Scan ingredients
+            </button>
+            <button
+              onClick={() => go("discover")}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-line-strong bg-surface px-7 py-4 text-[16px] font-semibold text-ink shadow-soft transition-all duration-200 hover:border-ink/25 hover:shadow-lifted active:scale-[0.98]"
+            >
+              Explore recipes
+            </button>
+          </div>
+
+          {/* Social proof of simplicity — honest, no fabricated numbers */}
+          <p className="mt-5 flex items-center gap-2 text-[13px] text-muted">
+            <Sparkles size={14} className="text-flame" />
+            No account needed. No clutter. Just dinner.
+          </p>
+        </header>
+
+        {/* Hero visual: ingredients → meal, the product promise in one view */}
+        <HeroVisual onScan={() => go("scan")} className="mt-10 lg:mt-0" />
+      </section>
+
+      {/* ── Weekly progress (only once they've cooked) ───── */}
+      {week.meals > 0 && (
+        <Card className="mt-10 p-5">
+          <div className="flex items-center justify-around text-center sm:justify-start sm:gap-10 sm:text-left">
+            <div>
+              <p className="font-display text-[26px] font-semibold leading-none">{week.meals}</p>
+              <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+                cooked this week
+              </p>
             </div>
-          )}
+            <div>
+              <p className="font-display text-[26px] font-semibold leading-none text-gold">
+                ₹{week.saved}
+              </p>
+              <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+                saved (est.)
+              </p>
+            </div>
+            <div>
+              <p className="font-display text-[26px] font-semibold leading-none text-sage">
+                {week.protein}g
+              </p>
+              <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+                protein
+              </p>
+            </div>
+          </div>
         </Card>
       )}
 
-      {/* Ingredient add */}
-      <SectionTitle
-        right={
-          <span className="flex items-center gap-3">
-            {inventoryIds.length > 0 && (
-              <button
-                onClick={() => useRuchi.getState().clearKitchen()}
-                className="-my-2 py-2 text-[13px] font-medium text-muted hover:text-ink"
-              >
-                Clear
-              </button>
-            )}
-            <button
-              onClick={() => setShowSearch((v) => !v)}
-              className="-my-2 py-2 text-[13px] font-semibold text-flame"
-            >
-              {showSearch ? "Done" : "Search all"}
-            </button>
-          </span>
-        }
-      >
-        Your ingredients
-      </SectionTitle>
-
-      <AnimatePresence initial={false}>
-        {showSearch && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden"
-          >
-            <div className="relative mb-3">
-              <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
-              <input
-                autoFocus
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Try “paneer”, “anda”, “biyyam”…"
-                className="w-full rounded-2xl border border-line bg-white py-3 pl-10 pr-10 text-[15px] outline-none placeholder:text-muted/60 focus:border-ink/40"
-              />
-              {query && (
+      {/* ── What's in your kitchen? ──────────────────────── */}
+      <section className="mt-12">
+        <SectionTitle
+          right={
+            <span className="flex items-center gap-3">
+              {hasInventory && (
                 <button
-                  onClick={() => setQuery("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted"
+                  onClick={() => useRuchi.getState().clearKitchen()}
+                  className="-my-2 py-2 text-[13px] font-medium text-muted transition-colors hover:text-ink"
                 >
-                  <X size={16} />
+                  Clear
                 </button>
               )}
-            </div>
-            {query && (
-              <div className="mb-4 flex flex-wrap gap-2">
-                {results.length === 0 && (
-                  <p className="text-sm text-muted">No match — try Telugu/Hindi spelling too.</p>
+              <button
+                onClick={() => setShowSearch((v) => !v)}
+                className="-my-2 py-2 text-[13px] font-semibold text-flame transition-colors hover:text-flame-deep"
+              >
+                {showSearch ? "Done" : "Search all"}
+              </button>
+            </span>
+          }
+        >
+          What&apos;s in your kitchen?
+        </SectionTitle>
+
+        <AnimatePresence initial={false}>
+          {showSearch && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="relative mb-3">
+                <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
+                <input
+                  autoFocus
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Try “paneer”, “anda”, “biyyam”…"
+                  aria-label="Search ingredients"
+                  className="w-full rounded-2xl border border-line bg-surface py-3 pl-10 pr-10 text-[15px] outline-none transition-colors placeholder:text-muted/60 focus:border-ink/40"
+                />
+                {query && (
+                  <button
+                    onClick={() => setQuery("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted"
+                    aria-label="Clear search"
+                  >
+                    <X size={16} />
+                  </button>
                 )}
-                {results.slice(0, 12).map((i) => (
-                  <Chip key={i.id} selected={has(i.id)} onClick={() => toggle(i.id)}>
-                    {has(i.id) ? "✓ " : "+ "}
-                    {i.name}
+              </div>
+              {query && (
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {results.length === 0 && (
+                    <p className="text-sm text-muted">No match — try Telugu/Hindi spelling too.</p>
+                  )}
+                  {results.slice(0, 12).map((i) => (
+                    <Chip key={i.id} selected={has(i.id)} onClick={() => toggle(i.id)}>
+                      {has(i.id) ? "✓ " : "+ "}
+                      {i.name}
+                    </Chip>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <div className="flex flex-wrap gap-2">
+          {SUGGESTED.map((id) => {
+            const ing = INGREDIENTS.find((i) => i.id === id);
+            if (!ing) return null;
+            return (
+              <Chip key={id} selected={has(id)} onClick={() => toggle(id)}>
+                {has(id) ? "✓ " : "+ "}
+                {ing.name}
+              </Chip>
+            );
+          })}
+        </div>
+
+        {/* Selected tray — only items added via search, not the quick chips */}
+        {inventory.filter((item) => !SUGGESTED.includes(item.ingredientId)).length > 0 && (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {inventory
+              .filter((item) => !SUGGESTED.includes(item.ingredientId))
+              .map((item) => {
+                const ing = INGREDIENTS.find((i) => i.id === item.ingredientId);
+                return (
+                  <span
+                    key={item.id}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-ink px-3 py-1.5 text-[13px] font-semibold text-cream"
+                  >
+                    {ing?.name ?? item.ingredientId}
+                    <button
+                      onClick={() => removeItem(item.ingredientId)}
+                      aria-label={`Remove ${ing?.name ?? item.ingredientId}`}
+                    >
+                      <X size={13} className="opacity-70 hover:opacity-100" />
+                    </button>
+                  </span>
+                );
+              })}
+          </div>
+        )}
+
+        {/* Preferences — appear once there's something to cook with */}
+        {hasInventory && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+            className="mt-8 space-y-6"
+          >
+            <div>
+              <p className="mb-2 text-[15px] font-semibold">What are you feeling?</p>
+              <div className="flex flex-wrap gap-2">
+                {INTENTS.map((it) => (
+                  <Chip
+                    key={it.id}
+                    selected={intents.includes(it.id)}
+                    onClick={() =>
+                      setIntents((cur) =>
+                        cur.includes(it.id) ? cur.filter((x) => x !== it.id) : [...cur, it.id],
+                      )
+                    }
+                  >
+                    {it.label}
                   </Chip>
                 ))}
               </div>
-            )}
+            </div>
+
+            <div>
+              <p className="mb-2 text-[15px] font-semibold">How much time do you have?</p>
+              <div className="flex flex-wrap gap-2">
+                {TIMES.map((t) => (
+                  <Chip key={t} selected={timeMax === t} onClick={() => setTimeMax(t)}>
+                    {t === 45 ? "No rush" : `${t} min`}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="mb-2 text-[15px] font-semibold">Budget</p>
+                <div className="flex flex-wrap gap-2">
+                  {BUDGETS.map((b) => (
+                    <Chip key={b} selected={budget === b} onClick={() => setBudget(b)}>
+                      ₹{b === 200 ? "200+" : b}
+                    </Chip>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="mb-2 text-[15px] font-semibold">People</p>
+                <div className="flex flex-wrap gap-2">
+                  {PEOPLE.map((p) => (
+                    <Chip key={p} selected={people === p} onClick={() => setPeople(p)}>
+                      {p === 4 ? "4+" : p}
+                    </Chip>
+                  ))}
+                </div>
+              </div>
+            </div>
           </motion.div>
         )}
-      </AnimatePresence>
+      </section>
 
-      {/* Quick-add chips */}
-      <div className="flex flex-wrap gap-2">
-        {SUGGESTED.map((id) => {
-          const ing = INGREDIENTS.find((i) => i.id === id);
-          if (!ing) return null;
-          return (
-            <Chip key={id} selected={has(id)} onClick={() => toggle(id)}>
-              {has(id) ? "✓ " : "+ "}
-              {ing.name}
-            </Chip>
-          );
-        })}
-      </div>
-
-      {/* Selected tray — only shows items added via search, not the quick chips */
-      inventory.filter((item) => !SUGGESTED.includes(item.ingredientId)).length > 0 && (
-        <div className="mt-4 flex flex-wrap gap-2">
-          {inventory
-            .filter((item) => !SUGGESTED.includes(item.ingredientId))
-            .map((item) => {
-              const ing = INGREDIENTS.find((i) => i.id === item.ingredientId);
-              return (
-                <span
-                  key={item.id}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-ink px-3 py-1.5 text-[13px] font-semibold text-cream"
-                >
-                  {ing?.name ?? item.ingredientId}
-                  <button
-                    onClick={() => removeItem(item.ingredientId)}
-                    aria-label={`Remove ${ing?.name ?? item.ingredientId}`}
-                  >
-                    <X size={13} className="opacity-70 hover:opacity-100" />
-                  </button>
-                </span>
-              );
-            })}
-        </div>
-      )}
-
-      {/* Preferences */}
-      {inventoryIds.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mt-8 space-y-6"
-        >
-          <div>
-            <p className="mb-2 text-[15px] font-semibold">What are you feeling?</p>
-            <div className="flex flex-wrap gap-2">
-              {INTENTS.map((it) => (
-                <Chip
-                  key={it.id}
-                  selected={intents.includes(it.id)}
-                  onClick={() =>
-                    setIntents((cur) =>
-                      cur.includes(it.id) ? cur.filter((x) => x !== it.id) : [...cur, it.id],
-                    )
-                  }
-                >
-                  {it.label}
-                </Chip>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <p className="mb-2 text-[15px] font-semibold">How much time do you have?</p>
-            <div className="flex flex-wrap gap-2">
-              {TIMES.map((t) => (
-                <Chip key={t} selected={timeMax === t} onClick={() => setTimeMax(t)}>
-                  {t === 45 ? "No rush" : `${t} min`}
-                </Chip>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="mb-2 text-[15px] font-semibold">Budget</p>
-              <div className="flex flex-wrap gap-2">
-                {BUDGETS.map((b) => (
-                  <Chip key={b} selected={budget === b} onClick={() => setBudget(b)}>
-                    ₹{b === 200 ? "200+" : b}
-                  </Chip>
-                ))}
-              </div>
-            </div>
-            <div>
-              <p className="mb-2 text-[15px] font-semibold">People</p>
-              <div className="flex flex-wrap gap-2">
-                {PEOPLE.map((p) => (
-                  <Chip key={p} selected={people === p} onClick={() => setPeople(p)}>
-                    {p === 4 ? "4+" : p}
-                  </Chip>
-                ))}
-              </div>
-            </div>
-          </div>
-        </motion.div>
-      )}
-
-      {/* Recommendations */}
-      {inventoryIds.length > 0 && (
-        <div className="mt-10">
+      {/* ── Recommendations ──────────────────────────────── */}
+      {hasInventory && (
+        <section className="mt-12" aria-live="polite">
           <SectionTitle
             right={
               <span className="text-[12px] font-medium text-muted">
@@ -356,15 +406,14 @@ export default function HomeScreen() {
           </SectionTitle>
 
           {shown.length === 0 ? (
-            <Card className="p-5">
-              <p className="font-semibold">Nothing fits those filters — yet.</p>
-              <p className="mt-1 text-sm text-muted">
-                Try more time, a bigger budget, or another ingredient or two.
-              </p>
-            </Card>
+            <EmptyState
+              icon={<Sparkles size={20} />}
+              title="Nothing fits those filters — yet."
+              body="Try more time, a bigger budget, or another ingredient or two."
+            />
           ) : (
-            <div className="space-y-3">
-              {shown.map((rec, idx) => {
+            <StaggerGroup className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3">
+              {shown.map((rec) => {
                 const r = rec.recipe;
                 const n = computeNutrition(r, people);
                 const cost = computeCostPerServing(r, people);
@@ -372,84 +421,165 @@ export default function HomeScreen() {
                   .map((m) => INGREDIENTS.find((i) => i.id === m)?.name ?? m)
                   .filter(Boolean);
                 return (
-                  <motion.div
-                    key={r.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: idx * 0.05 }}
-                  >
-                    <Card
-                      className="overflow-hidden p-5"
+                  <StaggerItem key={r.id}>
+                    <RecipeCard
+                      recipe={r}
+                      protein={n.protein}
+                      costPerServing={cost}
+                      missingCount={rec.missing.length}
+                      canCookNow={rec.missing.length === 0}
+                      reason={rec.reason}
                       onClick={() => go("meal", { recipeId: r.id })}
-                    >
-                      <div className="flex items-start gap-4">
-                        <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-flame-soft text-3xl">
-                          {r.heroEmoji}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <h3 className="truncate text-[17px] font-bold">{r.name}</h3>
-                            {idx === 0 && shown.length > 1 && (
-                              <span className="shrink-0 rounded-full bg-ink px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cream">
-                                Top pick
-                              </span>
-                            )}
-                          </div>
-                          <p className="mt-0.5 line-clamp-1 text-[13px] text-muted">{rec.reason}</p>
-                          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                            <Pill tone="protein">{n.protein}g protein</Pill>
-                            <Pill>{n.calories} kcal</Pill>
-                            <Pill tone="time">{r.timeMin} min</Pill>
-                            <Pill tone="savings">₹{cost}/serving</Pill>
-                            <Pill className="capitalize">{r.difficulty}</Pill>
-                          </div>
-                        </div>
-                      </div>
-                      {/* Why this one — makes the pick feel intelligent */}
-                      <ul className="mt-3 space-y-1 border-t border-line pt-3">
-                        {rec.why.slice(0, 4).map((w) => (
-                          <li key={w} className="flex gap-2 text-[13px] leading-relaxed text-muted">
-                            <span className="shrink-0 text-sage">✓</span>
+                    />
+                    {/* Why this one — makes the pick feel intelligent */}
+                    <div className="mt-2 px-1.5">
+                      <ul className="space-y-0.5">
+                        {rec.why.slice(0, 3).map((w) => (
+                          <li key={w} className="flex gap-2 text-[12.5px] leading-relaxed text-muted">
+                            <span className="shrink-0 text-sage" aria-hidden>✓</span>
+                            <span className="sr-only">Why: </span>
                             {w}
                           </li>
                         ))}
                       </ul>
-                      {missingNames.length > 0 && (
-                        <p className="mt-2 text-[13px] text-muted">
-                          {rec.notNeeded.length > 0 && missingNames.length === 0 ? null : (
-                            <>
-                              Missing: {missingNames.join(", ")}
-                              {rec.notNeeded.length > 0 && rec.notNeeded[0] && (
-                                <> — but you don&apos;t need {rec.notNeeded[0].toLowerCase()}.</>
-                              )}
-                            </>
-                          )}
+                      {missingNames.length > 0 && rec.notNeeded.length > 0 && rec.notNeeded[0] && (
+                        <p className="mt-1 text-[12.5px] text-muted">
+                          — but you don&apos;t need {rec.notNeeded[0].toLowerCase()}.
                         </p>
                       )}
-                    </Card>
-                  </motion.div>
+                    </div>
+                  </StaggerItem>
                 );
               })}
-            </div>
+            </StaggerGroup>
           )}
+        </section>
+      )}
+
+      {/* ── Empty-kitchen welcome ────────────────────────── */}
+      {isEmptyKitchen && (
+        <section className="mt-14">
+          <Card className="warm-glow overflow-hidden p-6 sm:p-8">
+            <p className="font-display text-[22px] font-semibold leading-snug">
+              The deal, simply.
+            </p>
+            <ul className="mt-3 space-y-2 text-[15px] leading-relaxed text-ink-soft">
+              <li className="flex gap-2.5">
+                <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-flame" aria-hidden />
+                Tap what&apos;s in your kitchen. No quantities needed.
+              </li>
+              <li className="flex gap-2.5">
+                <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-flame" aria-hidden />
+                RUCHI picks 3–4 dishes you can actually make.
+              </li>
+              <li className="flex gap-2.5">
+                <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-flame" aria-hidden />
+                Exact quantities, beginner steps, protein and cost — no guessing.
+              </li>
+            </ul>
+            <div className="mt-5 flex items-center gap-2 text-[13px] font-semibold text-flame-deep">
+              <Sparkles size={15} /> No account. No clutter. Just dinner. 🔥
+            </div>
+          </Card>
+        </section>
+      )}
+    </div>
+  );
+}
+
+// ── Hero visual ─────────────────────────────────────────────
+// The product demo as composition: ingredient chips cascade into a
+// floating meal card with real engine numbers. Purely presentational.
+
+const DEMO_INGREDIENTS = ["egg", "paneer", "tomato", "onion"] as const;
+/** Pinned demo dish — the hero's worked example (id exists in the catalog). */
+const DEMO_RECIPE_ID = "paneer-egg-bhurji";
+
+function HeroVisual({ onScan, className = "" }: { onScan: () => void; className?: string }) {
+  const demo = INGREDIENTS.filter((i) => (DEMO_INGREDIENTS as readonly string[]).includes(i.id));
+  const topRec = useMemo(() => {
+    const recs = recommend({
+      hasIds: [...DEMO_INGREDIENTS],
+      intents: ["high-protein"],
+      timeMax: 0,
+      budgetMax: 0,
+      servings: 1,
+      diet: "eggetarian",
+    });
+    return recs.find((rec) => rec.recipe.id === DEMO_RECIPE_ID) ?? recs[0];
+  }, []);
+
+  if (!topRec) return null;
+  const r = topRec.recipe;
+  const n = computeNutrition(r, 1);
+  const cost = computeCostPerServing(r, 1);
+
+  return (
+    <div aria-hidden className={`relative ${className}`}>
+      <div className="relative rounded-[2rem] border border-line bg-surface p-5 shadow-lifted sm:p-6">
+        {/* Ingredient row */}
+        <div className="flex flex-wrap items-center gap-2">
+          {demo.map((ing, i) => (
+            <motion.span
+              key={ing.id}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.15 + i * 0.08, duration: 0.35 }}
+              className="rounded-full border border-line bg-cream px-3.5 py-2 text-[13px] font-semibold text-ink-soft"
+            >
+              {ing.name}
+            </motion.span>
+          ))}
         </div>
-      )}
 
-      {/* Empty-kitchen nudge */}
-      {inventoryIds.length === 0 && (
-        <Card className="mt-10 p-5">
-          <p className="font-semibold">The deal, simply.</p>
-          <ul className="mt-2 space-y-1.5 text-sm leading-relaxed text-muted">
-            <li>· Tap what&apos;s in your kitchen. No quantities needed.</li>
-            <li>· RUCHI picks 3–4 dishes you can actually make.</li>
-            <li>· Exact quantities, beginner steps, protein and cost — no guessing.</li>
-          </ul>
-          <div className="mt-4 flex items-center gap-2 text-[13px] font-semibold text-flame">
-            <Sparkles size={15} /> No account. No clutter. Just dinner. 🔥
+        {/* Arrow */}
+        <div className="my-4 flex items-center gap-3">
+          <span className="h-px flex-1 bg-line" />
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-flame-soft text-flame-deep">
+            ↓
+          </span>
+          <span className="h-px flex-1 bg-line" />
+        </div>
+
+        {/* Meal card */}
+        <motion.button
+          onClick={onScan}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.45, duration: 0.4 }}
+          className="group block w-full text-left"
+        >
+          <FoodVisual recipe={r} emojiClassName="text-6xl" className="aspect-[16/8] w-full rounded-2xl" />
+          <div className="mt-4 flex items-start justify-between gap-3">
+            <div>
+              <p className="font-display text-[20px] font-semibold leading-snug">{r.name}</p>
+              <p className="mt-1 text-[13px] font-medium text-muted">
+                {r.timeMin} min
+                <span aria-hidden className="mx-1.5 text-line-strong">·</span>
+                {n.protein}g protein
+                <span aria-hidden className="mx-1.5 text-line-strong">·</span>
+                High protein
+              </p>
+            </div>
+            <span className="font-display text-[22px] font-semibold text-ink">₹{cost}</span>
           </div>
-        </Card>
-      )}
+        </motion.button>
+      </div>
 
+      {/* Floating accent chip — the AI whisper */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1, y: [0, -6, 0] }}
+        transition={{
+          opacity: { delay: 0.8, duration: 0.3 },
+          scale: { delay: 0.8, duration: 0.3 },
+          y: { duration: 3.2, repeat: Infinity, ease: "easeInOut", delay: 1.2 },
+        }}
+        className="absolute -top-4 right-4 rounded-full border border-line bg-surface px-3.5 py-2 text-[12px] font-semibold text-ink shadow-lifted sm:-right-3"
+      >
+        <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-sage align-middle" aria-hidden />
+        Cook tonight
+      </motion.div>
     </div>
   );
 }

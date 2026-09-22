@@ -111,16 +111,28 @@ describe("missing-ingredient logic", () => {
 });
 
 describe("diet gates", () => {
-  it("vegetarian never sees nonveg dishes", () => {
+  it("vegetarian never sees nonveg OR egg dishes (binary policy: egg = non-veg)", () => {
+    // Even with an egg-heavy pantry, strict vegetarian mode returns only veg.
     const recs = matchRecipes({ ...STUDENT, diet: "vegetarian", timeMax: 0, budgetMax: 0 });
     expect(recs.length).toBeGreaterThan(0);
-    for (const m of recs) expect(m.recipe.diet).not.toBe("nonveg");
+    for (const m of recs) expect(m.recipe.diet).toBe("veg");
   });
 
   it("eggetarian never sees nonveg dishes but keeps egg dishes", () => {
     const recs = matchRecipes(STUDENT);
     for (const m of recs) expect(m.recipe.diet).not.toBe("nonveg");
     expect(recs.some((m) => m.recipe.diet === "egg")).toBe(true);
+  });
+
+  it("eggetarian never unlocks meat recipes even with the full chicken kit", () => {
+    const recs = matchRecipes({
+      ...STUDENT,
+      hasIds: ["chicken-breast", "capsicum", "onion", "garlic", "soy-sauce", "vinegar"],
+      diet: "eggetarian",
+      timeMax: 0,
+      budgetMax: 0,
+    });
+    for (const m of recs) expect(m.recipe.diet).not.toBe("nonveg");
   });
 
   it("non-vegetarian unlocks chicken recipes when the full stir-fry kit is present", () => {

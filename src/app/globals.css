@@ -1,28 +1,82 @@
 @import "tailwindcss";
 
+/* ─────────────────────────────────────────────────────────────
+   RUCHI — design tokens
+   Warm cream foundation · terracotta flame · sage · gold
+   Charcoal ink for text; accents used sparingly and meaningfully.
+   ───────────────────────────────────────────────────────────── */
 @theme {
-  --color-cream: #fbf7f1;
+  /* Foundation */
+  --color-cream: #faf6ef;
+  --color-cream-deep: #f3ecdf;
   --color-surface: #ffffff;
-  --color-ink: #211b15;
-  --color-muted: #71685d;
-  --color-line: #ece4d8;
+  --color-surface-warm: #fffdf9;
+  --color-ink: #26201a;
+  --color-ink-soft: #4c443b;
+  --color-muted: #7d7367;
+  --color-line: #eae2d4;
+  --color-line-strong: #ddd2bf;
+
+  /* Brand */
   --color-flame: #e4572e;
   --color-flame-deep: #c7431f;
-  --color-flame-soft: #fdeee6;
-  --color-sage: #44785a;
-  --color-sage-soft: #e9f2ec;
+  --color-flame-soft: #fceee6;
+  --color-sage: #43755a;
+  --color-sage-soft: #e8f1ea;
   --color-gold: #b97f10;
-  --color-gold-soft: #fdf3dd;
+  --color-gold-soft: #fbf2dd;
 
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "SF Pro Text", "Segoe UI",
+  /* Type */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI",
     Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-display: "Georgia", "Times New Roman", serif;
+  --font-display: var(--font-fraunces), Georgia, "Times New Roman", serif;
+
+  /* Depth — soft, warm, rarely stacked more than one level */
+  --shadow-soft: 0 1px 2px rgb(38 32 26 / 0.04), 0 4px 14px -6px rgb(38 32 26 / 0.08);
+  --shadow-lifted: 0 2px 4px rgb(38 32 26 / 0.05), 0 14px 34px -14px rgb(38 32 26 / 0.18);
+  --shadow-cta: 0 8px 22px -8px rgb(199 67 31 / 0.55);
+
+  /* Motion */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --animate-rise: rise 0.5s var(--ease-out-soft) both;
+  --animate-fade: fade 0.35s ease both;
+  --animate-shimmer: shimmer 2.2s linear infinite;
+  --animate-pulse-soft: pulseSoft 2.4s ease-in-out infinite;
+  --animate-scanline: scanline 2.4s var(--ease-out-soft) infinite;
+  --animate-spin-slow: spin 14s linear infinite;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes shimmer {
+  from { transform: translateX(-130%) skewX(-12deg); }
+  to { transform: translateX(230%) skewX(-12deg); }
+}
+@keyframes pulseSoft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+@keyframes scanline {
+  0% { top: -12%; }
+  50% { top: 104%; }
+  100% { top: -12%; }
+}
+@keyframes floaty {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
 }
 
 html {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   background: var(--color-cream);
+  scroll-behavior: smooth;
 }
 
 body {
@@ -30,39 +84,72 @@ body {
   font-family: var(--font-sans);
   color: var(--color-ink);
   background: var(--color-cream);
+  font-size: 15px;
+  line-height: 1.6;
 }
 
-/* Keep tap targets comfortable on mobile */
 button,
 a {
   touch-action: manipulation;
 }
 
-/* Hide scrollbars in horizontal chip rows but keep scrolling */
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
+/* Editorial display type */
+.font-display {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  letter-spacing: -0.015em;
 }
-.no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
+
+/* Warm page texture — barely-there grain for depth, no visual noise */
+.grain::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
 }
+
+/* Soft radial warmth behind heroes */
+.warm-glow {
+  background:
+    radial-gradient(600px 300px at 12% -4%, rgb(228 87 46 / 0.07), transparent 65%),
+    radial-gradient(520px 260px at 88% 0%, rgb(67 117 90 / 0.06), transparent 60%);
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Hide scrollbars on desktop rails but keep vertical hint on touch */
+.rail {
+  scroll-snap-type: x proximity;
+  scroll-padding-left: 1rem;
+}
+.rail > * { scroll-snap-align: start; }
 
 /* Cooking Mode: stop the page from scrolling behind the overlay */
-.cooking-lock {
-  overflow: hidden;
-  touch-action: none;
+.cooking-lock { overflow: hidden; }
+
+/* ── Boot splash ─────────────────────────────────────── */
+.boot-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-cream);
 }
 
-/* ── Accessibility ──────────────────────────────────────
-   Visible keyboard focus everywhere; motion is a communication
-   layer, so users who opt out of animation still get full state
-   changes rendered instantly. */
+/* ── Focus ───────────────────────────────────────────── */
 :focus-visible {
   outline: 2px solid var(--color-flame);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: 6px;
 }
 
+/* ── Reduced motion ──────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

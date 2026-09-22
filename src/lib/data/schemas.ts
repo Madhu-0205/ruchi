@@ -103,7 +103,17 @@ export const recipeSchema = z.object({
     ]),
   ),
   proteinSource: z
-    .enum(["egg", "paneer", "chicken", "legume", "dairy", "soy"])
+    .enum([
+      "egg",
+      "paneer",
+      "chicken",
+      "mutton",
+      "fish",
+      "seafood",
+      "legume",
+      "dairy",
+      "soy",
+    ])
     .optional(),
   equipment: z.array(
     z.enum([

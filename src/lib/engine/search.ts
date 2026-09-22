@@ -8,12 +8,16 @@
 
 import { RECIPES } from "@/lib/data/recipes";
 import { INGREDIENTS, findIngredient } from "@/lib/data/ingredients";
+import { dietTypeOf } from "@/lib/data/diet";
 import { computeCostPerServing, computeNutrition } from "./nutrition";
-import type { Recipe, RecipeCategory } from "@/lib/types";
+import type { DietType, Recipe, RecipeCategory } from "@/lib/types";
 
 export interface RecipeFilters {
   category?: RecipeCategory | "all";
+  /** Rich 3-way filter (egg kept distinct for eggetarian users). */
   diet?: "veg" | "egg" | "nonveg" | "all";
+  /** Binary Veg / Non-Veg filter. Non-veg INCLUDES egg (product policy). */
+  dietType?: DietType | "all";
   maxTime?: number; // 0 = any
   maxCost?: number; // 0 = any
   difficulty?: "easy" | "medium" | "all";
@@ -26,6 +30,12 @@ export function filterRecipes(filters: RecipeFilters): Recipe[] {
     if (filters.category && filters.category !== "all" && r.category !== filters.category)
       return false;
     if (filters.diet && filters.diet !== "all" && r.diet !== filters.diet) return false;
+    if (
+      filters.dietType &&
+      filters.dietType !== "all" &&
+      dietTypeOf(r) !== filters.dietType
+    )
+      return false;
     if (filters.maxTime && filters.maxTime > 0 && r.timeMin > filters.maxTime) return false;
     if (filters.maxCost && filters.maxCost > 0 && computeCostPerServing(r, 1) > filters.maxCost)
       return false;
@@ -88,13 +98,16 @@ export function searchRecipes(query: string): Recipe[] {
   const wantsSnack = /\b(snack|snacks)\b/.test(q);
   const wantsDrink = /\b(drink|drinks|chai|coffee|lassi|smoothie)\b/.test(q);
   const wantsVeg = /\bveg(etarian)?\b/.test(q);
+  // "non veg", "nonveg", "non-veg" — the binary filter (egg included).
+  const wantsNonVeg = /\bnon[\s-]?veg\b|\bnonveg\b/.test(q);
   const wantsEasy = /\b(easy|beginner|simple)\b/.test(q);
 
   // Remaining words after removing known structural tokens.
   const structural = new Set(
     (
       "min minute minutes under quick fast cheap budget high protein breakfast lunch dinner " +
-      "snack snacks drink drinks chai coffee lassi smoothie veg vegetarian easy beginner simple the a an for with and"
+      "snack snacks drink drinks chai coffee lassi smoothie veg vegetarian nonveg non-veg " +
+      "easy beginner simple the a an for with and"
     ).split(" "),
   );
   const words = q
@@ -110,7 +123,17 @@ export function searchRecipes(query: string): Recipe[] {
   }
   const leftoverWords = words.filter((w) => !ingredientIdFromQuery(w));
 
-  return RECIPES.map((r) => {
+  // Dietary intent is structural: "veg" / "non veg" HARD-FILTER the pool
+  // (never a mere boost — "veg breakfast" must never surface butter
+  // chicken). "non veg" must win over the "veg" substring it contains.
+  // All other intents boost within the filtered pool.
+  const pool = wantsNonVeg
+    ? RECIPES.filter((r) => dietTypeOf(r) === "non_veg")
+    : wantsVeg
+      ? RECIPES.filter((r) => r.diet === "veg")
+      : RECIPES;
+
+  return pool.map((r) => {
     let score = 0;
     const name = r.name.toLowerCase();
 
@@ -152,6 +175,7 @@ export function searchRecipes(query: string): Recipe[] {
     if (wantsSnack && r.category === "snack") score += 18;
     if (wantsDrink && r.category === "drink") score += 18;
     if (wantsVeg && r.diet === "veg") score += 12;
+    if (wantsNonVeg && dietTypeOf(r) === "non_veg") score += 12;
     if (wantsEasy && r.difficulty === "easy") score += 10;
 
     return { r, score };

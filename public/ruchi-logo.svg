@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="RUCHI">
+  <!--
+    RUCHI official icon-only mark.
+    Concept: a bold stylized R on a warm flame tile — the warm food/cooking
+    accent — with a sage leaf sprig from RUCHI's earthy palette. No wordmark,
+    no tagline. Colors are the app's own design tokens:
+      flame  #e4572e   cream #fbf7f1   sage #44785a
+    Geometry is mirrored 1:1 by scripts/generate-icons.mjs, which rasterizes
+    this file to public/*.png for favicon + PWA sizes.
+  -->
+  <!-- Rounded app-icon tile -->
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="#e4572e"/>
+
+  <!-- Stylized R: heavy stem, rounded bowl, kicked leg (single path, filled) -->
+  <path
+    fill="#fbf7f1"
+    d="M150 96
+       h118
+       a86 86 0 0 1 34 165
+       l88 155
+       h-96
+       l-76 -138
+       h-28
+       v138
+       h-40
+       z
+       m40 40
+       v104
+       h74
+       a52 52 0 0 0 0 -104
+       z"
+  />
+
+  <!-- Sage leaf sprig: two leaves + stem, top-right of the bowl -->
+  <g fill="#44785a">
+    <path d="M382 96 q42 -26 74 -18 q4 36 -26 60 q-30 22 -62 10 q-6 -34 14 -52 z"/>
+    <path d="M330 148 q10 -34 40 -48 q22 30 6 62 q-14 28 -46 30 q-12 -22 0 -44 z"/>
+    <rect x="352" y="150" width="12" height="70" rx="6" transform="rotate(24 358 185)"/>
+  </g>
+</svg>

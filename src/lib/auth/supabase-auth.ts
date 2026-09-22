@@ -29,6 +29,7 @@ export type AuthFailure =
   | "email-not-confirmed"
   | "email-taken"
   | "weak-password"
+  | "password-reuse"
   | "rate-limited"
   | "network"
   | "unconfigured"
@@ -39,6 +40,7 @@ const friendlyMessage: Record<AuthFailure, string> = {
   "email-not-confirmed": "Confirm your email first — the link is in your inbox.",
   "email-taken": "An account with this email already exists. Try signing in instead.",
   "weak-password": "Choose a stronger password — at least 6 characters.",
+  "password-reuse": "Pick a password you haven't used before.",
   "rate-limited": "Too many attempts just now. Wait a minute and try again.",
   network: "Couldn't reach the account service. Check your connection.",
   unconfigured: "Accounts aren't set up in this build yet.",
@@ -67,6 +69,8 @@ function classify(error: {
   if (msg.includes("already registered") || msg.includes("already exists")) return "email-taken";
   if (msg.includes("password") && (msg.includes("weak") || msg.includes("short") || msg.includes("at least")))
     return "weak-password";
+  if (msg.includes("different from the old") || msg.includes("same as the old"))
+    return "password-reuse";
   if (
     msg.includes("rate limit") ||
     msg.includes("rate_limit") ||
@@ -189,4 +193,105 @@ export function onAuthChange(
 /** True when Supabase credentials exist in the build. */
 export function authAvailable(): boolean {
   return isSupabaseConfigured();
+}
+
+// ── Password reset ───────────────────────────────────────────
+
+/**
+ * The URL users land on after tapping the reset link in the email.
+ * Supabase rejects redirects to non-allow-listed URLs, so this must be
+ * added to the project's Auth → URL Configuration → Redirect URLs.
+ */
+export function passwordResetRedirectUrl(): string {
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const configured = process.env.NEXT_PUBLIC_PASSWORD_RESET_REDIRECT;
+  return configured || (origin ? `${origin}/` : "/");
+}
+
+/** Outcome of a reset-link request. `sent` means Supabase accepted it. */
+export type ResetRequestOutcome =
+  | { status: "sent"; email: string }
+  | { status: "failed"; reason: AuthFailure };
+
+/**
+ * Request a password-reset email. The response intentionally does not
+ * reveal whether the address has an account (same non-enumeration
+ * posture as sign-in): the UI confirms only that the request was
+ * accepted, never that an email is definitely on its way.
+ */
+export async function requestPasswordReset(email: string): Promise<ResetRequestOutcome> {
+  const supabase = getSupabase();
+  if (!supabase) return { status: "failed", reason: "unconfigured" };
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: passwordResetRedirectUrl(),
+    });
+    if (error) return { status: "failed", reason: classify(error) };
+    return { status: "sent", email };
+  } catch (e) {
+    return { status: "failed", reason: classify(e as { message?: string; status?: number }) };
+  }
+}
+
+/** Outcome of applying a new password during a recovery session. */
+export type PasswordUpdateOutcome =
+  | { status: "updated" }
+  | { status: "failed"; reason: AuthFailure };
+
+/**
+ * Set the new password inside a recovery session (the reset link signs
+ * the user in with `PASSWORD_RECOVERY` state; updateUser swaps the
+ * password and clears the recovery bit).
+ */
+export async function completePasswordReset(newPassword: string): Promise<PasswordUpdateOutcome> {
+  const supabase = getSupabase();
+  if (!supabase) return { status: "failed", reason: "unconfigured" };
+  try {
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) return { status: "failed", reason: classify(error) };
+    return { status: "updated" };
+  } catch (e) {
+    return { status: "failed", reason: classify(e as { message?: string; status?: number }) };
+  }
+}
+
+/**
+ * Detect and consume a password-recovery redirect.
+ *
+ * Supabase delivers recovery links in two styles depending on project
+ * config: PKCE (?code=…, default) and legacy implicit (#access_token=…&
+ * type=recovery). Both are read ONCE and erased from the address bar
+ * immediately — recovery tokens must never linger in history or
+ * referrers. Returns what the UI needs: that a recovery session exists,
+ * plus the display email when available.
+ */
+export function consumeRecoveryRedirect(): { recovery: boolean; email: string | null } {
+  if (typeof window === "undefined") return { recovery: false, email: null };
+  const params = new URLSearchParams(window.location.search);
+  let isRecovery = params.get("type") === "recovery";
+  if (!isRecovery && window.location.hash.includes("type=recovery")) {
+    isRecovery = true;
+  }
+  if (!isRecovery) return { recovery: false, email: null };
+
+  // Exchange a PKCE code for a session when that style is in use.
+  const code = params.get("code");
+  if (code) {
+    const supabase = getSupabase();
+    void supabase?.auth
+      .exchangeCodeForSession(code)
+      .catch(() => {
+        // A dead/used code leaves no session; the set-new-password card
+        // will fail honestly on submit instead of pretending.
+      })
+      .finally(() => {
+        window.history.replaceState(null, "", window.location.pathname);
+      });
+  } else {
+    // Legacy implicit style: the SDK absorbs the hash tokens on its own;
+    // scrubbing here keeps tokens out of the URL either way.
+    window.history.replaceState(null, "", window.location.pathname);
+  }
+
+  return { recovery: true, email: null };
 }

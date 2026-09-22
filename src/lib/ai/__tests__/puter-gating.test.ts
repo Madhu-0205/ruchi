@@ -94,6 +94,27 @@ describe("Puter SDK gating (no passive authorization)", () => {
     expect(fakeClient.auth.signIn).not.toHaveBeenCalled();
   });
 
+  it("Home's passive re-rank (rankRecommendations) never imports the SDK", async () => {
+    // The exact call shape HomeScreen's mount effect sends. Pre-gating this
+    // path imported the SDK on every page load → startup consent dialog.
+    const recs = new PuterMealRecommendationService();
+    const picks = await recs.rankRecommendations({
+      availableIngredientIds: ["egg", "tomato"],
+      intents: [],
+      timeMaxMin: 0,
+      budgetMaxInr: 0,
+      servings: 2,
+      diet: "non-vegetarian",
+      skill: "beginner",
+      candidates: [{ recipeId: "egg-bhurji", score: 1 }],
+    });
+    expect(picks).toBeNull(); // graceful deterministic fallback
+    expect(puterSdkReady()).toBe(false);
+    expect(puterSdkState().sdkImported).toBe(false);
+    expect(fakeClient.ai.chat).not.toHaveBeenCalled();
+    expect(fakeClient.auth.signIn).not.toHaveBeenCalled();
+  });
+
   it("puterChat from a passive context stays inert and fails soft", async () => {
     const res = await puterChat([{ role: "user", content: "hi" }], {
       model: "test-model",

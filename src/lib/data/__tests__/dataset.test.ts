@@ -17,11 +17,11 @@ describe("ingredient catalog", () => {
   it("every ingredient has aliases (search depends on them)", () => {
     for (const ing of INGREDIENTS) {
       expect(ing.aliases.length).toBeGreaterThan(0);
-      // water is free and salt has no calories — both legitimate zeros
+      // water is free, salt and baking soda have no calories — legitimate zeros
       if (ing.id !== "water") {
         expect(ing.costPer100).toBeGreaterThan(0);
       }
-      if (ing.id !== "water" && ing.id !== "salt") {
+      if (ing.id !== "water" && ing.id !== "salt" && ing.id !== "baking-soda") {
         expect(ing.nutritionPer100.kcal).toBeGreaterThan(0);
       }
       expect(ing.nutritionPer100.protein).toBeGreaterThanOrEqual(0);

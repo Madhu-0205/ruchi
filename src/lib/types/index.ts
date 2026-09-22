@@ -5,6 +5,17 @@
 
 export type DietTag = "veg" | "egg" | "nonveg";
 
+/**
+ * Binary dietary classification for discovery filters and the veg/non-veg
+ * separation. DERIVED from `diet` via `dietTypeOf()` — never stored twice.
+ *
+ * Product policy (egg): RUCHI follows the common Indian home convention
+ * where eggs count as non-veg in the binary view, while the richer 3-way
+ * `diet` field keeps "egg" distinct so eggetarian users are served
+ * precisely. So: dietType(veg) = "veg", dietType(egg | nonveg) = "non_veg".
+ */
+export type DietType = "veg" | "non_veg";
+
 export type Unit =
   | "count"
   | "g"
@@ -25,7 +36,16 @@ export type IngredientCategory =
   | "fat"
   | "condiment";
 
-export type ProteinSource = "egg" | "paneer" | "chicken" | "legume" | "dairy" | "soy";
+export type ProteinSource =
+  | "egg"
+  | "paneer"
+  | "chicken"
+  | "mutton"
+  | "fish"
+  | "seafood"
+  | "legume"
+  | "dairy"
+  | "soy";
 
 export type Intent =
   | "high-protein"

@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Search, X } from "lucide-react";
-import { Button, Card, Chip, Note, SectionTitle } from "@/components/ui";
+import { Refrigerator, Search, X } from "lucide-react";
+import { Button, Card, Chip, EmptyState, Note, SectionTitle } from "@/components/ui";
 import { useRuchi } from "@/lib/store";
 import { useScreen } from "@/lib/store/screens";
 import { INGREDIENTS, searchIngredients } from "@/lib/data/ingredients";
 import { recommend } from "@/lib/engine/match";
+import { RecipeCard } from "@/components/RecipeCard";
+import { computeCostPerServing, computeNutrition } from "@/lib/engine/nutrition";
 import type { KitchenItem } from "@/lib/types";
 
 function ExpiryEditor({ item, onDone }: { item: KitchenItem; onDone: () => void }) {
@@ -27,7 +29,7 @@ function ExpiryEditor({ item, onDone }: { item: KitchenItem; onDone: () => void 
           key={d}
           onClick={days(d)}
           className={`rounded-full px-2.5 py-1 text-[12px] font-semibold ${
-            current === d ? "bg-ink text-cream" : "border border-line bg-white"
+            current === d ? "bg-ink text-cream" : "border border-line bg-surface"
           }`}
         >
           {d}d
@@ -50,6 +52,18 @@ function useNow(): number {
     return () => window.clearInterval(t);
   }, []);
   return now;
+}
+
+function emojiFor(ingredientId: string): string {
+  const map: Record<string, string> = {
+    egg: "🥚", paneer: "🧀", tomato: "🍅", onion: "🧅", potato: "🥔",
+    rice: "🍚", bread: "🍞", curd: "🥛", milk: "🥛", carrot: "🥕",
+    "green-chili": "🌶️", capsicum: "🫑", lemon: "🍋", "chicken-breast": "🍗",
+    "coriander-leaves": "🌿", spinach: "🥬", cabbage: "🥬", peas: "🫛",
+    "spring-onion": "🧅", garlic: "🧄", ginger: "🫚", butter: "🧈",
+    "toor-dal": "🟡", "moong-dal": "🟢", oats: "🥣", poha: "🍚", atta: "🌾",
+  };
+  return map[ingredientId] ?? "🥘";
 }
 
 export default function KitchenScreen() {
@@ -93,13 +107,48 @@ export default function KitchenScreen() {
   );
 
   return (
-    <div className="pt-6">
-      <header className="mb-5">
-        <h1 className="font-display text-[30px] font-bold tracking-tight">My Kitchen</h1>
-        <p className="mt-1 text-[15px] text-muted">
+    <div className="pt-6 lg:pt-10">
+      <header className="mb-6">
+        <h1 className="font-display text-[32px] font-semibold tracking-tight sm:text-[38px]">
+          Kitchen
+        </h1>
+        <p className="mt-1.5 max-w-lg text-[15px] leading-relaxed text-muted">
           What you have, saved. RUCHI uses this to filter every recommendation.
         </p>
       </header>
+
+      {/* ── What can I make right now? (the point of this screen) ── */}
+      {inventory.length >= 2 && (
+        <section className="mb-10">
+          <SectionTitle
+            right={
+              <span className="text-[12px] font-medium text-muted">
+                {recs.length} ready or close
+              </span>
+            }
+          >
+            What can I make right now?
+          </SectionTitle>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {recs.slice(0, 3).map((rec) => {
+              const n = computeNutrition(rec.recipe, 1);
+              const cost = computeCostPerServing(rec.recipe, 1);
+              return (
+                <RecipeCard
+                  key={rec.recipe.id}
+                  recipe={rec.recipe}
+                  protein={n.protein}
+                  costPerServing={cost}
+                  missingCount={rec.missing.length}
+                  canCookNow={rec.missing.length === 0}
+                  reason={rec.reason}
+                  onClick={() => go("meal", { recipeId: rec.recipe.id })}
+                />
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* Search + add */}
       <div className="relative mb-3">
@@ -108,12 +157,14 @@ export default function KitchenScreen() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Add an ingredient — English, తెలుగు, हिंदी…"
-          className="w-full rounded-2xl border border-line bg-white py-3 pl-10 pr-10 text-[15px] outline-none placeholder:text-muted/60 focus:border-ink/40"
+          aria-label="Add an ingredient"
+          className="w-full rounded-2xl border border-line bg-surface py-3 pl-10 pr-10 text-[15px] shadow-soft outline-none placeholder:text-muted/60 focus:border-ink/40"
         />
         {query && (
           <button
             onClick={() => setQuery("")}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-muted"
+            aria-label="Clear search"
           >
             <X size={16} />
           </button>
@@ -142,15 +193,16 @@ export default function KitchenScreen() {
         </div>
       )}
 
-      {/* Inventory list */}
+      {/* Inventory */}
       {inventory.length === 0 ? (
-        <Card className="p-5">
-          <p className="font-semibold">Your kitchen is empty.</p>
-          <p className="mt-1 text-sm leading-relaxed text-muted">
-            Add whatever you actually have — eggs, rice, that sad onion in the corner. RUCHI will
-            remember and only suggest meals that fit.
-          </p>
-        </Card>
+        <div className="mt-2">
+          <EmptyState
+            icon={<Refrigerator size={20} />}
+            title="Your kitchen is empty."
+            body="Add whatever you actually have — eggs, rice, that sad onion in the corner. RUCHI will remember and only suggest meals that fit."
+            action={<Button onClick={() => go("scan")}>Scan ingredients instead</Button>}
+          />
+        </div>
       ) : (
         <>
           {expiringSoon.length > 0 && (
@@ -164,7 +216,10 @@ export default function KitchenScreen() {
 
           <SectionTitle
             right={
-              <button onClick={clearKitchen} className="text-[12px] font-medium text-muted hover:text-ink">
+              <button
+                onClick={clearKitchen}
+                className="text-[12px] font-medium text-muted transition-colors hover:text-ink"
+              >
                 Clear all
               </button>
             }
@@ -179,30 +234,35 @@ export default function KitchenScreen() {
                 ? Math.ceil((item.expiresAt - now) / 86400000)
                 : null;
               return (
-                <div key={item.id} className="px-4 py-3">
+                <div key={item.id} className="px-4 py-3.5 sm:px-5">
                   <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <span className="text-[15px] font-semibold">{ing?.name ?? item.ingredientId}</span>
-                      {expDays !== null && (
-                        <span
-                          className={`ml-2 text-[12px] font-semibold ${
-                            expDays <= 2 ? "text-flame-deep" : "text-muted"
-                          }`}
-                        >
-                          {expDays <= 0 ? "expires today" : `${expDays}d left`}
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="text-xl" aria-hidden>{emojiFor(item.ingredientId)}</span>
+                      <div className="min-w-0">
+                        <span className="text-[15px] font-semibold">
+                          {ing?.name ?? item.ingredientId}
                         </span>
-                      )}
+                        {expDays !== null && (
+                          <span
+                            className={`ml-2 text-[12px] font-semibold ${
+                              expDays <= 2 ? "text-flame-deep" : "text-muted"
+                            }`}
+                          >
+                            {expDays <= 0 ? "expires today" : `${expDays}d left`}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => setExpanded(expanded === item.id ? null : item.id)}
-                        className="rounded-full px-2.5 py-1 text-[12px] font-semibold text-muted hover:text-ink"
+                        className="rounded-full px-2.5 py-1 text-[12px] font-semibold text-muted transition-colors hover:text-ink"
                       >
                         expiry
                       </button>
                       <button
                         onClick={() => removeItem(item.ingredientId)}
-                        className="rounded-full p-1.5 text-muted hover:text-ink"
+                        className="rounded-full p-1.5 text-muted transition-colors hover:text-ink"
                         aria-label={`Remove ${ing?.name ?? item.ingredientId}`}
                       >
                         <X size={15} />
@@ -219,28 +279,8 @@ export default function KitchenScreen() {
         </>
       )}
 
-      {/* Use-it-up recommendations */}
-      {inventory.length >= 2 && (
-        <div className="mt-8">
-          <SectionTitle>Use what you have</SectionTitle>
-          <div className="space-y-3">
-            {recs.slice(0, 3).map((rec) => (
-              <Card key={rec.recipe.id} className="p-4" onClick={() => go("meal", { recipeId: rec.recipe.id })}>
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">{rec.recipe.heroEmoji}</span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[15px] font-bold">{rec.recipe.name}</p>
-                    <p className="text-[13px] text-muted">{rec.reason}</p>
-                  </div>
-                </div>
-              </Card>
-            ))}
-          </div>
-        </div>
-      )}
-
       {inventory.length === 0 && (
-        <Button className="mt-6 w-full" onClick={() => go("home")}>
+        <Button variant="secondary" className="mt-5 w-full" onClick={() => go("home")}>
           Add from Home instead
         </Button>
       )}

@@ -55,8 +55,10 @@ export function matchRecipes(f: MatchFilters): MatchScore[] {
   const scores: MatchScore[] = [];
 
   for (const r of RECIPES) {
-    // Diet gate
-    if (f.diet === "vegetarian" && r.diet === "nonveg") continue;
+    // Diet gate. "vegetarian" is strict — egg dishes are non-veg in the
+    // binary product policy (see dietTypeOf), so a veg-only context never
+    // recommends them. "eggetarian" adds egg back (veg + egg, no meat).
+    if (f.diet === "vegetarian" && r.diet !== "veg") continue;
     if (f.diet === "eggetarian" && r.diet === "nonveg") continue;
 
     // Time gate — a hard limit: a 30-min dish is useless to someone with

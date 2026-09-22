@@ -12,10 +12,28 @@
 import { Camera, Check } from "lucide-react";
 import AuthCard from "@/components/AuthCard";
 import { RuchiLogo } from "@/components/RuchiLogo";
+import { FoodVisual } from "@/components/FoodVisual";
+import { getRecipe } from "@/lib/data/recipes";
+
+/** The gate's backdrop dish — a real recipe from the catalog. */
+const GATE_RECIPE_ID = "paneer-egg-bhurji";
 
 export default function WelcomeGate({ showGuestExit = true }: { showGuestExit?: boolean }) {
+  const backdrop = getRecipe(GATE_RECIPE_ID);
+
   return (
-    <div className="mx-auto w-full max-w-md px-4 pb-16 pt-10 sm:pt-16">
+    <div className="relative mx-auto w-full max-w-md px-4 pb-16 pt-12 sm:pt-16">
+      {/* Soft editorial backdrop — one warm plate, half-lifted behind the copy */}
+      {backdrop && (
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-6 -z-10 flex justify-center">
+          <FoodVisual
+            recipe={backdrop}
+            emojiClassName="text-[120px] opacity-[0.12] blur-[1px]"
+            className="h-72 w-72 rounded-full"
+          />
+        </div>
+      )}
+
       {/* Editorial hero */}
       <header className="mb-8 text-center">
         <div className="flex justify-center">
@@ -32,12 +50,12 @@ export default function WelcomeGate({ showGuestExit = true }: { showGuestExit?: 
             <RuchiLogo size={72} priority />
           </div>
         </div>
-        <h1 className="mt-6 font-display text-[34px] font-semibold leading-[1.08] tracking-tight sm:text-[40px]">
+        <h1 className="mt-7 font-display text-display-lg font-semibold">
           Don&apos;t ask what to cook.
           <br />
-          <span className="text-flame">Show RUCHI what you have.</span>
+          <span className="accent-italic text-flame">Show RUCHI what you have.</span>
         </h1>
-        <p className="mx-auto mt-3.5 max-w-xs text-[15px] leading-relaxed text-muted">
+        <p className="mx-auto mt-4 max-w-xs text-[15px] leading-relaxed text-muted">
           Add your ingredients — RUCHI tells you what you can actually cook, step by step.
         </p>
       </header>

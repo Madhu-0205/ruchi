@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Refrigerator, Search, X } from "lucide-react";
-import { Button, Card, Chip, EmptyState, Note, SectionTitle } from "@/components/ui";
+import { Button, Card, Chip, EmptyState, Note, SectionHeading, SectionTitle } from "@/components/ui";
 import { useRuchi } from "@/lib/store";
 import { useScreen } from "@/lib/store/screens";
 import { INGREDIENTS, searchIngredients } from "@/lib/data/ingredients";
@@ -107,28 +107,26 @@ export default function KitchenScreen() {
   );
 
   return (
-    <div className="pt-6 lg:pt-10">
-      <header className="mb-6">
-        <h1 className="font-display text-[32px] font-semibold tracking-tight sm:text-[38px]">
-          Kitchen
-        </h1>
-        <p className="mt-1.5 max-w-lg text-[15px] leading-relaxed text-muted">
+    <div className="pt-8 lg:pt-14">
+      <header className="mb-7 lg:mb-10">
+        <h1 className="font-display text-display-xl font-semibold">Kitchen</h1>
+        <p className="mt-2 max-w-lg text-[15.5px] leading-relaxed text-muted">
           What you have, saved. RUCHI uses this to filter every recommendation.
         </p>
       </header>
 
       {/* ── What can I make right now? (the point of this screen) ── */}
       {inventory.length >= 2 && (
-        <section className="mb-10">
-          <SectionTitle
+        <section className="mb-12">
+          <SectionHeading
+            eyebrow="From what you have"
+            title="What can I make right now?"
             right={
               <span className="text-[12px] font-medium text-muted">
                 {recs.length} ready or close
               </span>
             }
-          >
-            What can I make right now?
-          </SectionTitle>
+          />
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {recs.slice(0, 3).map((rec) => {
               const n = computeNutrition(rec.recipe, 1);

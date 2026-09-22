@@ -18,7 +18,7 @@ export default function TopNav() {
   const reduce = useReducedMotion();
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line/70 bg-cream/85 backdrop-blur-md">
+    <header className="glass sticky top-0 z-40 border-b border-line/70">
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between gap-6 px-6 lg:px-8">
         {/* Wordmark */}
         <button

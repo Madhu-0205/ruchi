@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import { ArrowLeft, ChefHat, Flame, ShoppingBag, Sparkles } from "lucide-react";
-import { Button, Card, Pill, SectionTitle, Stat } from "@/components/ui";
+import { Button, Card, MetaLine, NumberFlow, Pill, SectionTitle, ShimmerSweep, Stat } from "@/components/ui";
 import { FoodVisual } from "@/components/FoodVisual";
 import { useScreen } from "@/lib/store/screens";
 import { useRuchi } from "@/lib/store";
@@ -73,36 +74,33 @@ export default function MealDetailScreen() {
       </div>
 
       {/* ── Editorial hero ───────────────────────────────── */}
-      <div className="lg:grid lg:grid-cols-[1.15fr_0.85fr] lg:items-center lg:gap-12">
+      <div className="lg:grid lg:grid-cols-[1.1fr_0.9fr] lg:items-center lg:gap-14">
         <FoodVisual
           recipe={recipe}
           emojiClassName="text-7xl sm:text-8xl lg:text-9xl"
           className="aspect-[4/3] w-full rounded-[2rem] sm:aspect-[16/9] lg:aspect-[4/3]"
         />
 
-        <div className="mt-6 lg:mt-0">
-          <h1 className="font-display text-[34px] font-semibold leading-[1.05] tracking-tight sm:text-[42px] lg:text-[48px]">
-            {recipe.name}
-          </h1>
-          {recipe.teluguName && (
-            <p className="mt-1.5 text-[15px] text-muted">{recipe.teluguName}</p>
-          )}
-          <p className="mt-3 max-w-md text-[15.5px] leading-relaxed text-ink-soft sm:text-[16px]">
+        <div className="mt-7 lg:mt-0">
+          <h1 className="font-display text-display-xl font-semibold">{recipe.name}</h1>
+          {recipe.teluguName && <p className="mt-2 text-[15px] text-muted">{recipe.teluguName}</p>}
+          <p className="mt-4 max-w-md text-[15.5px] leading-relaxed text-ink-soft sm:text-[16px]">
             {recipe.description}
           </p>
 
           {/* Metadata line — typographic, not pills */}
-          <p className="mt-4 text-[14px] font-medium text-muted">
-            {recipe.timeMin} min
-            <span aria-hidden className="mx-2 text-line-strong">·</span>
-            {nutrition.protein}g protein
-            <span aria-hidden className="mx-2 text-line-strong">·</span>
-            ₹{costPerServing} / serving
-            <span aria-hidden className="mx-2 text-line-strong">·</span>
-            <span className="capitalize">{recipe.diet === "veg" ? "Vegetarian" : recipe.diet === "egg" ? "Egg" : "Non-veg"}</span>
-          </p>
+          <MetaLine
+            size="lg"
+            className="mt-5"
+            items={[
+              `${recipe.timeMin} min`,
+              `${nutrition.protein}g protein`,
+              `₹${costPerServing} / serving`,
+              recipe.diet === "veg" ? "Vegetarian" : recipe.diet === "egg" ? "Egg" : "Non-veg",
+            ]}
+          />
 
-          <div className="mt-6 hidden lg:block">
+          <div className="mt-7 hidden lg:block">
             <Button
               variant="flame"
               size="lg"
@@ -112,19 +110,29 @@ export default function MealDetailScreen() {
                 go("cooking", { recipeId: recipe.id });
               }}
             >
-              <ChefHat size={18} /> Start cooking
+              <ShimmerSweep />
+              <ChefHat size={18} />
+              <span className="relative">Start cooking</span>
             </Button>
           </div>
         </div>
       </div>
 
       {/* ── Nutrition band ───────────────────────────────── */}
-      <Card className="mt-8 p-5 lg:mt-10">
+      <Card className="mt-9 p-5 lg:mt-12">
         <div className="grid grid-cols-4 gap-3">
-          <Stat value={`${nutrition.protein}g`} label="protein" tone="protein" />
-          <Stat value={nutrition.calories} label="kcal" />
+          <Stat
+            value={<NumberFlow value={nutrition.protein} suffix="g" />}
+            label="protein"
+            tone="protein"
+          />
+          <Stat value={<NumberFlow value={nutrition.calories} />} label="kcal" />
           <Stat value={`${recipe.timeMin}m`} label="time" tone="time" />
-          <Stat value={`₹${costPerServing}`} label="/ serving" tone="savings" />
+          <Stat
+            value={<NumberFlow value={costPerServing} prefix="₹" />}
+            label="/ serving"
+            tone="savings"
+          />
         </div>
         <p className="mt-4 border-t border-line pt-3.5 text-[13px] leading-relaxed text-muted">
           {proteinLine} Nutrition is an estimate, not a lab report.
@@ -132,21 +140,30 @@ export default function MealDetailScreen() {
       </Card>
 
       {/* ── Servings scaler ──────────────────────────────── */}
-      <div className="mt-9">
+      <div className="mt-10">
         <SectionTitle>Servings</SectionTitle>
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-1.5 rounded-2xl border border-line bg-surface p-1.5 shadow-soft">
           {PEOPLE_OPTIONS.map((p) => (
             <button
               key={p}
               onClick={() => setPeople(p)}
               aria-pressed={people === p}
-              className={`h-12 flex-1 rounded-2xl border text-[15px] font-semibold transition-all ${
-                people === p
-                  ? "border-ink bg-ink text-cream shadow-soft"
-                  : "border-line bg-surface text-ink hover:border-line-strong"
-              }`}
+              className="relative h-11 flex-1 rounded-xl text-[15px] font-semibold transition-colors duration-150"
             >
-              {p === 4 ? "4+" : p}
+              {people === p && (
+                <motion.span
+                  layoutId="servings-thumb"
+                  className="absolute inset-0 rounded-xl bg-ink shadow-soft"
+                  transition={{ type: "spring", damping: 30, stiffness: 350 }}
+                />
+              )}
+              <span
+                className={`relative transition-colors duration-150 ${
+                  people === p ? "text-cream" : "text-ink"
+                }`}
+              >
+                {p === 4 ? "4+" : p}
+              </span>
             </button>
           ))}
         </div>
@@ -244,7 +261,9 @@ export default function MealDetailScreen() {
           </p>
           <div className="mt-4 flex items-center justify-between rounded-2xl bg-gold-soft px-4 py-3.5">
             <span className="text-[14px] font-semibold text-gold">Potential saving</span>
-            <span className="font-display text-[22px] font-semibold text-gold">₹{save}</span>
+            <span className="font-display text-[24px] font-semibold text-gold">
+              <NumberFlow value={save} prefix="₹" />
+            </span>
           </div>
           <p className="mt-2.5 text-[12px] text-muted">
             Cost estimated from typical metro India ingredient prices. Estimates, not invoices.
@@ -291,7 +310,9 @@ export default function MealDetailScreen() {
             go("cooking", { recipeId: recipe.id });
           }}
         >
-          <ChefHat size={18} /> Start cooking
+          <ShimmerSweep />
+          <ChefHat size={18} />
+          <span className="relative">Start cooking</span>
         </Button>
         <p className="mt-2 text-center text-[12px] text-muted">
           <Flame size={11} className="mr-1 inline" />

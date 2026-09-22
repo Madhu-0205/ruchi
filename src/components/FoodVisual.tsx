@@ -30,15 +30,19 @@ export function paletteFor(id: string): { bg: string; ring: string } {
 /**
  * Large editorial food visual — the "image" layer for recipe cards and
  * hero banners. Gradient plate + soft ring shadow + oversized emoji.
+ * `zoom` enables the hover-scale treatment (cards opt in via a parent
+ * `group`); motion is transform-only so it stays cheap.
  */
 export function FoodVisual({
   recipe,
   className = "",
   emojiClassName = "text-6xl",
+  zoom = false,
 }: {
   recipe: Pick<Recipe, "id" | "heroEmoji" | "name">;
   className?: string;
   emojiClassName?: string;
+  zoom?: boolean;
 }) {
   const palette = paletteFor(recipe.id);
   return (
@@ -57,7 +61,20 @@ export function FoodVisual({
             "radial-gradient(120% 90% at 30% 20%, rgb(255 255 255 / 0.5), transparent 55%), radial-gradient(120% 100% at 80% 90%, rgb(38 32 26 / 0.07), transparent 60%)",
         }}
       />
-      <span aria-hidden className={`relative select-none leading-none ${emojiClassName}`}>
+      {/* gentle top sheen — editorial light source, always the same side */}
+      <div
+        aria-hidden
+        className="absolute inset-x-0 top-0 h-1/3"
+        style={{
+          background: "linear-gradient(180deg, rgb(255 255 255 / 0.28), transparent)",
+        }}
+      />
+      <span
+        aria-hidden
+        className={`relative select-none leading-none transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+          zoom ? "group-hover:scale-[1.08]" : ""
+        } ${emojiClassName}`}
+      >
         {recipe.heroEmoji}
       </span>
     </div>

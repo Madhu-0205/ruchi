@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Camera, Search, Sparkles, X } from "lucide-react";
-import { Card, Chip, EmptyState, SectionTitle } from "@/components/ui";
+import { Card, Chip, EmptyState, SectionHeading, SectionTitle, ShimmerSweep } from "@/components/ui";
 import { RuchiLogo } from "@/components/RuchiLogo";
 import { FoodVisual } from "@/components/FoodVisual";
 import { RecipeCard } from "@/components/RecipeCard";
@@ -11,6 +11,7 @@ import { StaggerGroup, StaggerItem } from "@/components/motion";
 import { useRuchi, weeklyProgress } from "@/lib/store";
 import { useScreen } from "@/lib/store/screens";
 import { INGREDIENTS, searchIngredients } from "@/lib/data/ingredients";
+import { RECIPES } from "@/lib/data/recipes";
 import { recommend, matchRecipes } from "@/lib/engine/match";
 import { getRecommendationService, aiConfigured } from "@/lib/ai";
 import { computeCostPerServing, computeNutrition } from "@/lib/engine/nutrition";
@@ -32,6 +33,21 @@ const PEOPLE: People[] = [1, 2, 3, 4];
 const SUGGESTED = [
   "egg", "paneer", "tomato", "onion", "rice", "bread", "potato", "curd", "capsicum", "toor-dal",
 ];
+
+// Horizontal rail on mobile → 4-col editorial grid on desktop.
+// Module-level so the component identity is stable across renders
+// (react-hooks/static-components: components created during render reset).
+function Rail({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rail no-scrollbar -mx-4 flex gap-4 overflow-x-auto px-4 pb-2 lg:mx-0 lg:grid lg:grid-cols-4 lg:overflow-visible lg:px-0">
+      {children}
+    </div>
+  );
+}
+
+function RailItem({ children }: { children: React.ReactNode }) {
+  return <div className="w-[240px] shrink-0 sm:w-[260px] lg:w-auto">{children}</div>;
+}
 
 export default function HomeScreen() {
   const inventory = useRuchi((s) => s.inventory);
@@ -121,10 +137,26 @@ export default function HomeScreen() {
   const hasInventory = inventoryIds.length > 0;
   const isEmptyKitchen = inventoryIds.length === 0;
 
+  // ── Editorial sections from the real catalog (deterministic, no AI) ──
+  // Rail sections exclude drinks: the food rails read best as plated meals,
+  // and drinks surface in Discover's own collections.
+  const editorial = useMemo(() => {
+    const food = RECIPES.filter((r) => r.category !== "drink");
+    const perServingCost = (r: (typeof RECIPES)[number]) => computeCostPerServing(r, 1);
+    const protein = (r: (typeof RECIPES)[number]) => computeNutrition(r, 1).protein;
+    const byTime = [...food].sort((a, b) => a.timeMin - b.timeMin);
+    return {
+      good: [...food].sort((a, b) => protein(b) - protein(a)).slice(0, 6),
+      quick: byTime.slice(0, 8),
+      highProtein: [...food].sort((a, b) => protein(b) - protein(a)).slice(0, 8),
+      budget: [...food].sort((a, b) => perServingCost(a) - perServingCost(b)).slice(0, 8),
+    };
+  }, []);
+
   return (
-    <div className="pt-6 lg:pt-10">
+    <div className="pt-8 lg:pt-14">
       {/* ── Hero ─────────────────────────────────────────── */}
-      <section className="lg:grid lg:grid-cols-[1.1fr_0.9fr] lg:items-center lg:gap-12">
+      <section className="lg:grid lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:gap-16">
         <header>
           <div className="flex items-center gap-2.5 lg:hidden">
             <RuchiLogo size={28} priority />
@@ -132,7 +164,7 @@ export default function HomeScreen() {
               రుచి · RUCHI
             </p>
           </div>
-          <h1 className="mt-3 font-display text-[36px] font-semibold leading-[1.05] tracking-tight sm:text-[44px] lg:mt-0 lg:text-[56px]">
+          <h1 className="mt-4 font-display text-display-hero font-semibold lg:mt-0">
             <span className="block">Turn what you have</span>{" "}
             <span className="block">
               into{" "}
@@ -154,74 +186,76 @@ export default function HomeScreen() {
                   />
                 </svg>
               </span>{" "}
-              worth{" "}
-              <span className="whitespace-nowrap">eating.</span>
+              <span className="accent-italic whitespace-nowrap">worth eating.</span>
             </span>
           </h1>
-          <p className="mt-4 max-w-md text-[15px] leading-relaxed text-muted sm:text-[16px] lg:mt-5 lg:text-[17px]">
+          <p className="mt-5 max-w-md text-[16px] leading-relaxed text-muted lg:text-[17px]">
             Show RUCHI your ingredients and get meals that actually fit your time, preferences
             and budget.
           </p>
 
-          <div className="mt-6 flex flex-col gap-3 sm:flex-row lg:mt-8">
+          <div className="mt-7 flex flex-col gap-3 sm:flex-row lg:mt-9">
             <button
               onClick={() => go("scan")}
-              className="inline-flex items-center justify-center gap-2.5 rounded-2xl bg-flame px-7 py-4 text-[16px] font-bold text-white shadow-cta transition-all duration-200 hover:bg-flame-deep active:scale-[0.98]"
+              className="relative inline-flex items-center justify-center gap-2.5 overflow-hidden rounded-2xl bg-flame px-8 py-4 text-[16px] font-bold text-white shadow-cta transition-all duration-200 hover:bg-flame-deep active:scale-[0.98]"
             >
+              <ShimmerSweep />
               <Camera size={18} strokeWidth={2.2} />
-              Scan ingredients
+              <span className="relative">Scan ingredients</span>
             </button>
             <button
               onClick={() => go("discover")}
-              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-line-strong bg-surface px-7 py-4 text-[16px] font-semibold text-ink shadow-soft transition-all duration-200 hover:border-ink/25 hover:shadow-lifted active:scale-[0.98]"
+              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-line-strong bg-surface px-8 py-4 text-[16px] font-semibold text-ink shadow-soft transition-all duration-200 hover:border-ink/25 hover:shadow-lifted active:scale-[0.98]"
             >
               Explore recipes
             </button>
           </div>
 
           {/* Social proof of simplicity — honest, no fabricated numbers */}
-          <p className="mt-5 flex items-center gap-2 text-[13px] text-muted">
+          <p className="mt-6 flex items-center gap-2 text-[13px] text-muted">
             <Sparkles size={14} className="text-flame" />
             No account needed. No clutter. Just dinner.
           </p>
         </header>
 
         {/* Hero visual: ingredients → meal, the product promise in one view */}
-        <HeroVisual onScan={() => go("scan")} className="mt-10 lg:mt-0" />
+        <HeroVisual onScan={() => go("scan")} className="mt-12 lg:mt-0" />
       </section>
 
       {/* ── Weekly progress (only once they've cooked) ───── */}
       {week.meals > 0 && (
-        <Card className="mt-10 p-5">
-          <div className="flex items-center justify-around text-center sm:justify-start sm:gap-10 sm:text-left">
+        <div className="mt-14 border-y border-line py-6">
+          <div className="flex items-center justify-around gap-6 text-center sm:justify-start sm:gap-14 sm:text-left">
             <div>
-              <p className="font-display text-[26px] font-semibold leading-none">{week.meals}</p>
-              <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+              <p className="font-display text-[30px] font-semibold leading-none">
+                {week.meals}
+              </p>
+              <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
                 cooked this week
               </p>
             </div>
             <div>
-              <p className="font-display text-[26px] font-semibold leading-none text-gold">
+              <p className="font-display text-[30px] font-semibold leading-none text-gold">
                 ₹{week.saved}
               </p>
-              <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+              <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
                 saved (est.)
               </p>
             </div>
             <div>
-              <p className="font-display text-[26px] font-semibold leading-none text-sage">
+              <p className="font-display text-[30px] font-semibold leading-none text-sage">
                 {week.protein}g
               </p>
-              <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+              <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
                 protein
               </p>
             </div>
           </div>
-        </Card>
+        </div>
       )}
 
       {/* ── What's in your kitchen? ──────────────────────── */}
-      <section className="mt-12">
+      <section className="mt-14">
         <SectionTitle
           right={
             <span className="flex items-center gap-3">
@@ -366,7 +400,7 @@ export default function HomeScreen() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <p className="mb-2 text-[15px] font-semibold">Budget</p>
                 <div className="flex flex-wrap gap-2">
@@ -394,16 +428,16 @@ export default function HomeScreen() {
 
       {/* ── Recommendations ──────────────────────────────── */}
       {hasInventory && (
-        <section className="mt-12" aria-live="polite">
-          <SectionTitle
+        <section className="mt-14" aria-live="polite">
+          <SectionHeading
+            eyebrow="From your kitchen"
+            title="Cook this tonight"
             right={
               <span className="text-[12px] font-medium text-muted">
                 {shown.length} pick{shown.length === 1 ? "" : "s"} for you
               </span>
             }
-          >
-            Cook this tonight
-          </SectionTitle>
+          />
 
           {shown.length === 0 ? (
             <EmptyState
@@ -458,12 +492,12 @@ export default function HomeScreen() {
 
       {/* ── Empty-kitchen welcome ────────────────────────── */}
       {isEmptyKitchen && (
-        <section className="mt-14">
-          <Card className="warm-glow overflow-hidden p-6 sm:p-8">
-            <p className="font-display text-[22px] font-semibold leading-snug">
+        <section className="mt-16">
+          <Card className="warm-glow overflow-hidden p-7 sm:p-9">
+            <p className="font-display text-display-md font-semibold leading-snug">
               The deal, simply.
             </p>
-            <ul className="mt-3 space-y-2 text-[15px] leading-relaxed text-ink-soft">
+            <ul className="mt-4 space-y-2.5 text-[15px] leading-relaxed text-ink-soft">
               <li className="flex gap-2.5">
                 <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-flame" aria-hidden />
                 Tap what&apos;s in your kitchen. No quantities needed.
@@ -477,12 +511,142 @@ export default function HomeScreen() {
                 Exact quantities, beginner steps, protein and cost — no guessing.
               </li>
             </ul>
-            <div className="mt-5 flex items-center gap-2 text-[13px] font-semibold text-flame-deep">
-              <Sparkles size={15} /> No account. No clutter. Just dinner. 🔥
+            <div className="mt-6 flex items-center gap-2 text-[13px] font-semibold text-flame-deep">
+              <Sparkles size={15} /> No account. No clutter. Just dinner.
             </div>
           </Card>
         </section>
       )}
+
+      {/* ── Cook something good — editorial rows ─────────── */}
+      <section className="mt-16">
+        <SectionHeading
+          eyebrow="The kitchen, decided"
+          title="Cook something good"
+          right={
+            <button
+              onClick={() => go("discover")}
+              className="text-[13px] font-semibold text-flame transition-colors hover:text-flame-deep"
+            >
+              All recipes →
+            </button>
+          }
+        />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {editorial.good.slice(0, 6).map((r) => (
+            <RecipeCard
+              key={r.id}
+              recipe={r}
+              protein={computeNutrition(r, 1).protein}
+              costPerServing={computeCostPerServing(r, 1)}
+              missingCount={0}
+              canCookNow={false}
+              size="lg"
+              onClick={() => go("meal", { recipeId: r.id })}
+            />
+          ))}
+        </div>
+      </section>
+
+      {/* ── Quick meals ──────────────────────────────────── */}
+      <section className="mt-16">
+        <SectionHeading
+          eyebrow="Faster than delivery"
+          title="Quick meals"
+          right={
+            <button
+              onClick={() => go("discover")}
+              className="text-[13px] font-semibold text-flame transition-colors hover:text-flame-deep"
+            >
+              Browse →
+            </button>
+          }
+        />
+        <Rail>
+          {editorial.quick.map((r) => (
+            <RailItem key={r.id}>
+              <RecipeCard
+                recipe={r}
+                layout="vertical"
+                protein={computeNutrition(r, 1).protein}
+                costPerServing={computeCostPerServing(r, 1)}
+                missingCount={0}
+                canCookNow={false}
+                onClick={() => go("meal", { recipeId: r.id })}
+              />
+            </RailItem>
+          ))}
+        </Rail>
+      </section>
+
+      {/* ── High-protein meals ───────────────────────────── */}
+      <section className="mt-14">
+        <SectionHeading eyebrow="20g+ per serving" title="High-protein meals" />
+        <Rail>
+          {editorial.highProtein.map((r) => (
+            <RailItem key={r.id}>
+              <RecipeCard
+                recipe={r}
+                layout="vertical"
+                protein={computeNutrition(r, 1).protein}
+                costPerServing={computeCostPerServing(r, 1)}
+                missingCount={0}
+                canCookNow={false}
+                onClick={() => go("meal", { recipeId: r.id })}
+              />
+            </RailItem>
+          ))}
+        </Rail>
+      </section>
+
+      {/* ── Budget-friendly meals ────────────────────────── */}
+      <section className="mt-14">
+        <SectionHeading eyebrow="Full plates, small bill" title="Budget-friendly meals" />
+        <Rail>
+          {editorial.budget.map((r) => (
+            <RailItem key={r.id}>
+              <RecipeCard
+                recipe={r}
+                layout="vertical"
+                protein={computeNutrition(r, 1).protein}
+                costPerServing={computeCostPerServing(r, 1)}
+                missingCount={0}
+                canCookNow={false}
+                onClick={() => go("meal", { recipeId: r.id })}
+              />
+            </RailItem>
+          ))}
+        </Rail>
+      </section>
+
+      {/* ── Final CTA ────────────────────────────────────── */}
+      <section className="mt-20">
+        <div className="relative overflow-hidden rounded-[2rem] bg-ink px-6 py-12 text-center text-cream sm:px-10 sm:py-16">
+          <div
+            aria-hidden
+            className="absolute inset-0"
+            style={{
+              background:
+                "radial-gradient(560px 260px at 20% -10%, rgb(228 87 46 / 0.25), transparent 60%), radial-gradient(480px 240px at 85% 110%, rgb(67 117 90 / 0.2), transparent 60%)",
+            }}
+          />
+          <p className="relative font-display text-display-lg font-semibold leading-tight">
+            Your kitchen already has<br />
+            <span className="accent-italic text-flame">tonight&apos;s dinner.</span>
+          </p>
+          <p className="relative mx-auto mt-3.5 max-w-sm text-[15px] leading-relaxed text-cream/70">
+            One photo, three picks, one pan. That&apos;s the whole product.
+          </p>
+          <button
+            onClick={() => go("scan")}
+            className="relative mt-7 inline-flex items-center justify-center gap-2.5 overflow-hidden rounded-2xl bg-flame px-8 py-4 text-[16px] font-bold text-white shadow-cta transition-all duration-200 hover:bg-flame-deep active:scale-[0.98]"
+          >
+            <ShimmerSweep />
+            <Camera size={18} strokeWidth={2.2} />
+            <span className="relative">Scan ingredients</span>
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -516,7 +680,7 @@ function HeroVisual({ onScan, className = "" }: { onScan: () => void; className?
 
   return (
     <div aria-hidden className={`relative ${className}`}>
-      <div className="relative rounded-[2rem] border border-line bg-surface p-5 shadow-lifted sm:p-6">
+      <div className="relative rounded-[2rem] border border-line bg-surface p-5 shadow-lifted sm:p-7">
         {/* Ingredient row */}
         <div className="flex flex-wrap items-center gap-2">
           {demo.map((ing, i) => (
@@ -533,9 +697,9 @@ function HeroVisual({ onScan, className = "" }: { onScan: () => void; className?
         </div>
 
         {/* Arrow */}
-        <div className="my-4 flex items-center gap-3">
+        <div className="my-5 flex items-center gap-3">
           <span className="h-px flex-1 bg-line" />
-          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-flame-soft text-flame-deep">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-flame-soft text-[13px] font-bold text-flame-deep">
             ↓
           </span>
           <span className="h-px flex-1 bg-line" />
@@ -549,11 +713,13 @@ function HeroVisual({ onScan, className = "" }: { onScan: () => void; className?
           transition={{ delay: 0.45, duration: 0.4 }}
           className="group block w-full text-left"
         >
-          <FoodVisual recipe={r} emojiClassName="text-6xl" className="aspect-[16/8] w-full rounded-2xl" />
+          <FoodVisual recipe={r} zoom emojiClassName="text-6xl" className="aspect-[16/9] w-full rounded-2xl" />
           <div className="mt-4 flex items-start justify-between gap-3">
             <div>
-              <p className="font-display text-[20px] font-semibold leading-snug">{r.name}</p>
-              <p className="mt-1 text-[13px] font-medium text-muted">
+              <p className="font-display text-[21px] font-semibold leading-snug transition-colors duration-200 group-hover:text-flame-deep">
+                {r.name}
+              </p>
+              <p className="mt-1.5 text-[13px] font-medium text-muted">
                 {r.timeMin} min
                 <span aria-hidden className="mx-1.5 text-line-strong">·</span>
                 {n.protein}g protein
@@ -561,7 +727,7 @@ function HeroVisual({ onScan, className = "" }: { onScan: () => void; className?
                 High protein
               </p>
             </div>
-            <span className="font-display text-[22px] font-semibold text-ink">₹{cost}</span>
+            <span className="font-display text-[24px] font-semibold text-ink">₹{cost}</span>
           </div>
         </motion.button>
       </div>

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { CloudUpload, Loader2, LogOut } from "lucide-react";
-import { Button, Card, Pill, SectionTitle } from "@/components/ui";
+import { Button, Card, Pill, SectionTitle } from "@/components/ui"; // SectionHeading added where used below
 import AuthCard from "@/components/AuthCard";
 import { useRuchi, streak, weeklyProgress } from "@/lib/store";
 import { insertBetaFeedback, type FeedbackTopic } from "@/lib/auth/supabase-data";
@@ -129,16 +129,16 @@ export default function ProfileScreen() {
     }`;
 
   return (
-    <div className="pt-6 lg:pt-10">
-      <header className="mb-6">
-        <h1 className="font-display text-[32px] font-semibold tracking-tight sm:text-[38px]">
+    <div className="pt-8 lg:pt-14">
+      <header className="mb-7 lg:mb-10">
+        <h1 className="font-display text-display-xl font-semibold">
           {account?.displayName
             ? `Hey ${account.displayName}`
             : name
               ? `Hey ${name}`
               : "Your profile"}
         </h1>
-        <p className="mt-1.5 text-[15px] text-muted">
+        <p className="mt-2 text-[15px] text-muted">
           {weeklySummaryLine(week.meals)}
         </p>
       </header>

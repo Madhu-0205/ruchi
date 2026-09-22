@@ -4,6 +4,7 @@
    RUCHI — design tokens
    Warm cream foundation · terracotta flame · sage · gold
    Charcoal ink for text; accents used sparingly and meaningfully.
+   Editorial scale: fluid clamp() display sizes, generous rhythm.
    ───────────────────────────────────────────────────────────── */
 @theme {
   /* Foundation */
@@ -33,8 +34,10 @@
 
   /* Depth — soft, warm, rarely stacked more than one level */
   --shadow-soft: 0 1px 2px rgb(38 32 26 / 0.04), 0 4px 14px -6px rgb(38 32 26 / 0.08);
-  --shadow-lifted: 0 2px 4px rgb(38 32 26 / 0.05), 0 14px 34px -14px rgb(38 32 26 / 0.18);
+  --shadow-card: 0 1px 3px rgb(38 32 26 / 0.05), 0 10px 28px -12px rgb(38 32 26 / 0.12);
+  --shadow-lifted: 0 2px 4px rgb(38 32 26 / 0.05), 0 18px 44px -16px rgb(38 32 26 / 0.2);
   --shadow-cta: 0 8px 22px -8px rgb(199 67 31 / 0.55);
+  --shadow-modal: 0 24px 70px -20px rgb(38 32 26 / 0.32);
 
   /* Motion */
   --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
@@ -93,11 +96,39 @@ a {
   touch-action: manipulation;
 }
 
-/* Editorial display type */
+/* Editorial display type — tight tracking at large sizes, optical sizing on */
 .font-display {
   font-family: var(--font-display);
   font-optical-sizing: auto;
   letter-spacing: -0.015em;
+}
+
+/* Fluid editorial scale — one rhythm from 320px to 1920px */
+.text-display-hero {
+  font-size: clamp(2.5rem, 4.6vw + 1.35rem, 4.625rem); /* 40 → 74 */
+  line-height: 1.02;
+  letter-spacing: -0.022em;
+}
+.text-display-xl {
+  font-size: clamp(2rem, 3vw + 1.1rem, 3.25rem); /* 32 → 52 */
+  line-height: 1.06;
+  letter-spacing: -0.02em;
+}
+.text-display-lg {
+  font-size: clamp(1.625rem, 1.9vw + 1rem, 2.5rem); /* 26 → 40 */
+  line-height: 1.1;
+  letter-spacing: -0.018em;
+}
+.text-display-md {
+  font-size: clamp(1.375rem, 1.1vw + 1rem, 1.75rem); /* 22 → 28 */
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+}
+
+/* Serif italic accent inside display headlines */
+.accent-italic {
+  font-style: italic;
+  font-variation-settings: "SOFT" 60, "WONK" 1;
 }
 
 /* Warm page texture — barely-there grain for depth, no visual noise */
@@ -116,6 +147,18 @@ a {
   background:
     radial-gradient(600px 300px at 12% -4%, rgb(228 87 46 / 0.07), transparent 65%),
     radial-gradient(520px 260px at 88% 0%, rgb(67 117 90 / 0.06), transparent 60%);
+}
+
+/* Restrained glass — cream glass for nav chrome only */
+.glass {
+  background: color-mix(in srgb, var(--color-cream) 84%, transparent);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+}
+.glass-dark {
+  background: color-mix(in srgb, var(--color-ink) 55%, transparent);
+  backdrop-filter: blur(14px) saturate(1.3);
+  -webkit-backdrop-filter: blur(14px) saturate(1.3);
 }
 
 .no-scrollbar::-webkit-scrollbar { display: none; }

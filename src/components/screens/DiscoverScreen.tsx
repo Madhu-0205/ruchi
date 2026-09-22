@@ -1,6 +1,7 @@
 "use client";
 
 import { useDeferredValue, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import { Search, SlidersHorizontal, X } from "lucide-react";
 import { EmptyState, SectionTitle } from "@/components/ui";
 import { RecipeCard } from "@/components/RecipeCard";
@@ -159,13 +160,11 @@ export default function DiscoverScreen() {
   const filtersActive = maxTime !== 0 || (diet && diet !== "all") || (dietType && dietType !== "all");
 
   return (
-    <div className="pt-6 lg:pt-10">
+    <div className="pt-8 lg:pt-14">
       {/* Editorial header */}
-      <header className="mb-6 lg:mb-8">
-        <h1 className="font-display text-[32px] font-semibold tracking-tight sm:text-[38px]">
-          Discover
-        </h1>
-        <p className="mt-1.5 max-w-lg text-[15px] leading-relaxed text-muted">
+      <header className="mb-7 lg:mb-10">
+        <h1 className="font-display text-display-xl font-semibold">Discover</h1>
+        <p className="mt-2 max-w-lg text-[15.5px] leading-relaxed text-muted">
           Curated lists, not a bottomless feed. That&apos;s the point.
         </p>
       </header>
@@ -174,7 +173,7 @@ export default function DiscoverScreen() {
       <div className="mb-5 flex items-center gap-2">
         <div className="relative flex-1">
           <Search
-            className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-muted"
+            className="pointer-events-none absolute left-4 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-muted"
             aria-hidden
           />
           <input
@@ -183,7 +182,7 @@ export default function DiscoverScreen() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search recipes, ingredients…"
             aria-label="Search recipes"
-            className="w-full rounded-2xl border border-line bg-surface py-3 pl-10 pr-9 text-[15px] text-ink shadow-soft outline-none transition-colors placeholder:text-muted/70 focus:border-ink/40"
+            className="w-full rounded-2xl border border-line bg-surface py-3.5 pl-11 pr-9 text-[15px] text-ink shadow-soft outline-none transition-colors placeholder:text-muted/70 focus:border-ink/40"
           />
           {query && (
             <button
@@ -199,7 +198,7 @@ export default function DiscoverScreen() {
           onClick={() => setShowFilters((v) => !v)}
           aria-expanded={showFilters}
           aria-label="Toggle filters"
-          className={`flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-2xl border transition-colors ${
+          className={`flex h-[50px] w-[50px] shrink-0 items-center justify-center rounded-2xl border transition-colors ${
             filtersActive || showFilters
               ? "border-ink bg-ink text-cream"
               : "border-line bg-surface text-ink shadow-soft"
@@ -256,21 +255,29 @@ export default function DiscoverScreen() {
       {!searching && (
         <>
           <div className="no-scrollbar -mx-4 mb-3 flex gap-2 overflow-x-auto px-4 pb-1 lg:mx-0 lg:px-0">
-            {COLLECTIONS.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => setActive(c.id)}
-                className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition-all ${
-                  active === c.id
-                    ? "bg-ink text-cream shadow-soft"
-                    : "border border-line bg-surface text-ink hover:border-line-strong hover:shadow-soft"
-                }`}
-              >
-                {c.label}
-              </button>
-            ))}
+            {COLLECTIONS.map((c) => {
+              const isActive = active === c.id;
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => setActive(c.id)}
+                  className={`relative shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition-colors duration-150 ${
+                    isActive ? "text-cream" : "border border-line bg-surface text-ink hover:border-line-strong hover:shadow-soft"
+                  }`}
+                >
+                  {isActive && (
+                    <motion.span
+                      layoutId="discover-pill"
+                      className="absolute inset-0 rounded-full bg-ink shadow-soft"
+                      transition={{ type: "spring", damping: 30, stiffness: 350 }}
+                    />
+                  )}
+                  <span className="relative">{c.label}</span>
+                </button>
+              );
+            })}
           </div>
-          <p className="mb-6 text-[14px] text-muted">{col.blurb}</p>
+          <p className="mb-7 text-[14px] text-muted">{col.blurb}</p>
         </>
       )}
 

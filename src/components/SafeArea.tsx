@@ -39,13 +39,31 @@ export default function SafeArea({ children }: { children: React.ReactNode }) {
   useRuchi((s) => s.recoveryMode);
   useRuchi((s) => s.pendingConfirmationEmail);
   useRuchi((s) => s.guestMode);
-  const authFlow = deriveAuthFlowState(useRuchi.getState());
 
+  // Hydration contract: the FIRST client render must match the server's
+  // splash output exactly. The auth probe can settle before React's
+  // hydration render runs (unconfigured Supabase resolves in a microtask),
+  // so the store may already hold a settled state here — trusting it would
+  // mismatch the SSR HTML. Gate the live derivation on `mounted` (false on
+  // both sides of the first render, true one effect later). This is the
+  // canonical prerender-safe pattern; the one-render-late swap is invisible
+  // behind the splash by design.
+  const [mounted, setMounted] = useState(false);
   const [capFired, setCapFired] = useState(false);
+  const authFlow = mounted
+    ? deriveAuthFlowState(useRuchi.getState())
+    : ("initializing" as const);
 
   useEffect(() => {
     hydrate();
   }, [hydrate]);
+
+  // One render later than the SSR HTML — that single deferred render is
+  // what keeps the client's first paint identical to the server output.
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
 
   // Safety cap, armed once on mount: even if the session check hangs
   // (offline, very slow network), the splash can never trap the user —

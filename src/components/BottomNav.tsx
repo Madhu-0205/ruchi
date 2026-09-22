@@ -26,20 +26,25 @@ export default function BottomNav() {
           <NavTab key={id} id={id} label={label} Icon={Icon} screen={screen} go={go} reduce={reduce} />
         ))}
 
-        {/* Scan — the signature action, emphasized but composed */}
+        {/* Scan — the signature action, emphasized but integrated (no raised
+            square breaking the bar; a filled flame disc inside the rhythm) */}
         <button
           onClick={() => go("scan")}
           aria-label="Scan ingredients"
           aria-current={screen === "scan" ? "page" : undefined}
-          className="group relative -mt-5 flex w-14 shrink-0 flex-col items-center justify-start"
+          className="group relative flex w-16 shrink-0 flex-col items-center gap-0.5 py-1.5"
         >
           <motion.span
             whileTap={reduce ? undefined : { scale: 0.92 }}
-            className="flex h-12 w-12 items-center justify-center rounded-2xl bg-flame text-white shadow-cta transition-colors group-hover:bg-flame-deep"
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-flame text-white shadow-cta transition-colors group-hover:bg-flame-deep"
           >
-            <ScanLine size={22} strokeWidth={2.2} />
+            <ScanLine size={18} strokeWidth={2.2} />
           </motion.span>
-          <span className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-muted">
+          <span
+            className={`text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+              screen === "scan" ? "text-ink" : "text-muted/75 group-hover:text-muted"
+            }`}
+          >
             Scan
           </span>
         </button>

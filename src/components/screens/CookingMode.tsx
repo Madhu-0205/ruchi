@@ -20,6 +20,7 @@ import { track } from "@/lib/engine/analytics";
 import { computeCost, computeNutrition } from "@/lib/engine/nutrition";
 import { scaleStepText } from "@/lib/engine/units";
 import { GENERIC_QUESTIONS, fallbackAnswer } from "@/lib/engine/help-fallback";
+import { RingProgress } from "@/components/ui";
 import type { AiHelpAnswer } from "@/lib/data/schemas";
 import type { RecipeStep } from "@/lib/types";
 
@@ -208,7 +209,7 @@ export default function CookingMode() {
       </div>
 
       {/* Step content */}
-      <div className="flex-1 overflow-y-auto px-4 py-6 lg:px-8">
+      <div className="flex-1 overflow-y-auto px-4 pb-6 pt-7 sm:pt-9 lg:px-8">
         <div className="mx-auto flex h-full max-w-xl flex-col">
           {/* Progress dots + count */}
           <div className="mb-5 flex items-center justify-between">
@@ -241,7 +242,7 @@ export default function CookingMode() {
             >
               {step && (
                 <>
-                  <h1 className="font-display text-[30px] font-semibold leading-[1.1] tracking-tight sm:text-[38px]">
+                  <h1 className="font-display text-display-lg font-semibold">
                     {step.title}
                   </h1>
                   <p className="mt-4 text-[17px] leading-relaxed text-cream/90 sm:text-[19px] sm:leading-relaxed">
@@ -266,15 +267,23 @@ export default function CookingMode() {
                   {step.durationMin ? (
                     <div className="mt-6 rounded-3xl border border-cream/10 bg-cream/[0.06] p-5">
                       <div className="flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-3.5">
-                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-flame/15">
-                            <Timer size={20} className="text-flame" />
-                          </div>
+                        <div className="flex items-center gap-4">
+                          <RingProgress
+                            progress={
+                              countdown.remaining !== null && countdown.total > 0
+                                ? countdown.remaining / countdown.total
+                                : 0
+                            }
+                            size={76}
+                            stroke={5}
+                          >
+                            <Timer size={16} className="text-flame" />
+                          </RingProgress>
                           <div>
                             <p className="text-[12px] font-semibold uppercase tracking-wide text-cream/50">
                               Suggested timer
                             </p>
-                            <p className="font-display text-[30px] font-semibold tabular-nums leading-tight">
+                            <p className="font-display text-[32px] font-semibold tabular-nums leading-tight">
                               {formatClock(countdown.remaining)}
                             </p>
                           </div>
@@ -478,20 +487,20 @@ function CompletionView({
         >
           🎉
         </motion.div>
-        <h1 className="mt-6 font-display text-[32px] font-semibold leading-[1.1] tracking-tight sm:text-[40px]">
+        <h1 className="mt-6 font-display text-display-xl font-semibold">
           That wasn&apos;t a recipe.
           <br />
-          That was dinner.
+          <span className="accent-italic">That was dinner.</span>
         </h1>
-        <p className="mt-3.5 max-w-xs text-[15px] leading-relaxed text-cream/70">
+        <p className="mt-4 max-w-xs text-[15px] leading-relaxed text-cream/70">
           {recipeName} — {protein}g protein, {calories} kcal, on the table by you.
         </p>
 
-        <div className="mt-8 w-full max-w-xs rounded-3xl bg-cream/[0.08] p-5">
+        <div className="mt-9 w-full max-w-xs rounded-3xl border border-cream/10 bg-cream/[0.08] p-5">
           <p className="text-[12px] font-semibold uppercase tracking-wider text-cream/60">
             You didn&apos;t just cook dinner
           </p>
-          <p className="mt-2 font-display text-[32px] font-semibold text-gold-soft">₹{saved} saved</p>
+          <p className="mt-2 font-display text-[34px] font-semibold text-gold-soft">₹{saved} saved</p>
           <p className="mt-2 text-[13px] text-cream/60">
             vs ₹{deliveryCost} delivery. Estimated, but still yours.
           </p>

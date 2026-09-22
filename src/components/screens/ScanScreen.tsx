@@ -266,7 +266,7 @@ export default function ScanScreen() {
                 className="absolute inset-0"
                 style={{
                   background:
-                    "radial-gradient(480px 240px at 50% -10%, rgb(228 87 46 / 0.22), transparent 65%)",
+                    "radial-gradient(480px 240px at 50% -10%, rgb(228 87 46 / 0.22), transparent 65%), radial-gradient(360px 200px at 85% 110%, rgb(67 117 90 / 0.18), transparent 60%)",
                 }}
               />
               <motion.div
@@ -277,10 +277,10 @@ export default function ScanScreen() {
               >
                 <ScanLine size={30} strokeWidth={2} className="text-flame" />
               </motion.div>
-              <h1 className="relative mt-5 font-display text-[28px] font-semibold leading-tight sm:text-[34px]">
+              <h1 className="relative mt-5 font-display text-display-lg font-semibold">
                 Show me what you&apos;ve got
               </h1>
-              <p className="relative mx-auto mt-2.5 max-w-sm text-[14.5px] leading-relaxed text-cream/70">
+              <p className="relative mx-auto mt-3 max-w-sm text-[14.5px] leading-relaxed text-cream/70">
                 One photo of your counter, fridge or groceries.
                 <br />
                 RUCHI finds the ingredients — you confirm.
@@ -418,7 +418,7 @@ export default function ScanScreen() {
                 />
               )}
               <div>
-                <h1 className="font-display text-[24px] font-semibold leading-tight sm:text-[28px]">
+                <h1 className="font-display text-display-md font-semibold">
                   {previewUrl ? "I found these 👀" : "Got it — here's what I heard 👀"}
                 </h1>
                 <p className="text-[13px] text-muted">
@@ -431,17 +431,22 @@ export default function ScanScreen() {
               </div>
             </div>
 
-            {/* Confident items first */}
+            {/* Confident items first — staggered, certain → checked in order */}
             <Card className="divide-y divide-line overflow-hidden">
               <AnimatePresence initial={false}>
-                {items.filter((it) => !it.uncertain).map((it) => (
+                {items.filter((it) => !it.uncertain).map((it, i) => (
                   <motion.div
                     key={it.key}
                     layout
-                    initial={{ opacity: 0, x: -16 }}
-                    animate={{ opacity: 1, x: 0 }}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, x: 16 }}
-                    transition={{ type: "spring", damping: 26, stiffness: 320 }}
+                    transition={{
+                      type: "spring",
+                      damping: 26,
+                      stiffness: 320,
+                      delay: Math.min(i * 0.05, 0.3),
+                    }}
                     className="px-4 py-3.5"
                   >
                     <ConfirmRow
@@ -468,14 +473,19 @@ export default function ScanScreen() {
                 </p>
                 <Card className="divide-y divide-line overflow-hidden border-dashed">
                   <AnimatePresence initial={false}>
-                    {items.filter((it) => it.uncertain).map((it) => (
+                    {items.filter((it) => it.uncertain).map((it, i) => (
                       <motion.div
                         key={it.key}
                         layout
-                        initial={{ opacity: 0, x: -16 }}
-                        animate={{ opacity: 1, x: 0 }}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, x: 16 }}
-                        transition={{ type: "spring", damping: 26, stiffness: 320 }}
+                        transition={{
+                          type: "spring",
+                          damping: 26,
+                          stiffness: 320,
+                          delay: Math.min(i * 0.05, 0.3),
+                        }}
                         className="px-4 py-3.5"
                       >
                         <ConfirmRow
@@ -569,9 +579,7 @@ export default function ScanScreen() {
               </div>
             )}
 
-            <h1 className="font-display text-[28px] font-semibold leading-tight sm:text-[32px]">
-              I have…
-            </h1>
+            <h1 className="font-display text-display-lg font-semibold">I have…</h1>
             <p className="mt-1.5 text-[14px] text-muted">
               Just list them naturally — like you&apos;d tell a flatmate.
             </p>

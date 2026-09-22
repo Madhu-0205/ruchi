@@ -484,7 +484,7 @@ export const RECIPES_B: Recipe[] = [
     cuisine: "Indian",
     diet: "veg",
     category: "dinner",
-    heroEmoji: "💪",
+    heroEmoji: "🍲",
     timeMin: 30,
     difficulty: "easy",
     servings: 2,

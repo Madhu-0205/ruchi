@@ -21,6 +21,7 @@ export function RecipeCard({
   onClick,
   reason,
   size = "md",
+  layout = "auto",
 }: {
   recipe: Recipe;
   protein: number;
@@ -30,19 +31,31 @@ export function RecipeCard({
   onClick: () => void;
   reason?: string;
   size?: "md" | "lg";
+  /** "vertical" forces the stacked layout even on wide viewports —
+   * needed inside narrow rail/grid containers where the viewport-keyed
+   * row layout would cramp the text column. */
+  layout?: "auto" | "vertical";
 }) {
   const lg = size === "lg";
+  const vertical = layout === "vertical" || lg;
   // Row layout keys off lg: (not sm:) — the wide 6xl container only exists
   // at lg+; below that cards live in the 448px column and must stay vertical.
   return (
     <Card onClick={onClick} className="group h-full overflow-hidden">
-      <div className={lg ? "flex flex-col" : "flex flex-col lg:flex-row"}>
+      <div className={vertical ? "flex flex-col" : "flex flex-col lg:flex-row"}>
         {/* Visual */}
-        <div className={lg ? "" : "lg:w-44 lg:shrink-0"}>
+        <div className={vertical ? "" : "lg:w-44 lg:shrink-0"}>
           <FoodVisual
             recipe={recipe}
+            zoom
             emojiClassName={lg ? "text-7xl" : "text-5xl lg:text-6xl"}
-            className={`w-full ${lg ? "aspect-[16/9]" : "aspect-[16/9] lg:h-full lg:aspect-auto lg:min-h-[9rem]"}`}
+            className={`w-full ${
+              vertical
+                ? lg
+                  ? "aspect-[16/9]"
+                  : "aspect-[4/3]"
+                : "aspect-[4/3] lg:h-full lg:aspect-auto lg:min-h-[9rem]"
+            }`}
           />
         </div>
 
@@ -50,7 +63,7 @@ export function RecipeCard({
         <div className="flex min-w-0 flex-1 flex-col p-4 sm:p-5">
           <div className="flex items-start justify-between gap-3">
             <h3
-              className={`font-display font-semibold leading-snug tracking-tight text-ink ${
+              className={`font-display font-semibold leading-snug tracking-tight text-ink transition-colors duration-200 group-hover:text-flame-deep ${
                 lg ? "text-[21px]" : "text-[17px]"
               }`}
             >
@@ -63,9 +76,7 @@ export function RecipeCard({
             />
           </div>
 
-          {reason && (
-            <p className="mt-1 line-clamp-1 text-[13px] text-muted">{reason}</p>
-          )}
+          {reason && <p className="mt-1 line-clamp-1 text-[13px] text-muted">{reason}</p>}
 
           {/* Metadata line — typographic, not pills */}
           <p className="mt-2 text-[13px] font-medium text-muted">
@@ -80,7 +91,7 @@ export function RecipeCard({
           <div className="mt-auto flex items-center justify-between gap-2 pt-3">
             <span className="text-[15px] font-bold text-ink">₹{costPerServing}</span>
             {canCookNow ? (
-              <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-sage">
+              <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-sage">
                 <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-sage" />
                 Can cook now
               </span>

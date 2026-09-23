@@ -240,6 +240,45 @@ export function whyThis(m: MatchScore, f: MatchFilters): string[] {
 }
 
 /**
+ * "Almost there" candidates — recipes the user is 1–2 confirmed ingredients
+ * away from. ALWAYS a separate, clearly-labeled section; NEVER mixed into
+ * primary results (see recommend()'s strict eligibility gate). Swap-covered
+ * recipes (Soya Chunks Curry ↔ paneer) land here, not in primary.
+ */
+export function nearRecipes(f: MatchFilters, limit = 4): Recommendation[] {
+  const ranked = matchRecipes(f).filter(
+    (m) => m.missing.length >= 1 && m.missing.length <= 2,
+  );
+  return ranked.slice(0, limit).map((m) => {
+    const missingSet = new Set(m.missing);
+    const notNeeded = m.recipe.ingredients
+      .filter((ri) => ri.optional && !missingSet.has(ri.ingredientId))
+      .map((ri) => findIngredientName(ri.ingredientId));
+    const coreIds = m.recipe.ingredients.filter(
+      (ri) => !ri.optional && !isAssumedPantry(ri.ingredientId),
+    );
+    return {
+      recipe: m.recipe,
+      missing: m.missing,
+      reason:
+        m.missing.length === 1
+          ? "You're missing 1 ingredient"
+          : `You're missing ${m.missing.length} ingredients`,
+      why: whyThis(m, f),
+      usesCount: coreIds.length - m.missing.length,
+      protein: computeNutrition(m.recipe, f.servings).protein,
+      costPerServing: computeCostPerServing(m.recipe, f.servings),
+      minutes: m.recipe.timeMin,
+      difficulty: m.recipe.difficulty,
+      notNeeded,
+      category: m.category,
+      coreMatched: m.coreMatched,
+      coreTotal: m.coreTotal,
+    };
+  });
+}
+
+/**
  * Top 3–4 recommendations with microcopy + structured why-lines.
  *
  * `aiPicks` (optional) is the AI's selection/order over the candidate list —
@@ -250,8 +289,20 @@ export function whyThis(m: MatchScore, f: MatchFilters): string[] {
 export function recommend(f: MatchFilters, aiPicks?: { recipeId: string; matchReason: string[] }[]): Recommendation[] {
   const ranked = matchRecipes(f);
 
-  // Apply AI ordering (only ids present in the deterministic top slice).
-  const byId = new Map(ranked.map((m) => [m.recipe.id, m]));
+  // ── STRICT ELIGIBILITY (hard gate, before any ranking or AI) ──
+  // Primary results may only contain recipes whose non-optional, non-pantry
+  // ingredient set is FULLY OWNED: recipeRequiredIngredients ⊆ user's
+  // confirmed ingredients. This is deliberately stricter than the score's
+  // substitution awareness — even a catalog-validated swap (paneer for
+  // soya-chunks) does not make a recipe eligible for primary results,
+  // because the user never confirmed the headline ingredient. Swap-covered
+  // and near-miss recipes surface ONLY in the clearly-labeled "Almost
+  // there" section via nearRecipes(). AI ordering below operates only
+  // within this already-filtered list; it can reorder, never expand.
+  const eligible = ranked.filter((m) => m.missing.length === 0);
+
+  // Apply AI ordering (only ids present in the deterministic eligible slice).
+  const byId = new Map(eligible.map((m) => [m.recipe.id, m]));
   const top: MatchScore[] = [];
   if (aiPicks && aiPicks.length > 0) {
     for (const pick of aiPicks) {
@@ -259,12 +310,12 @@ export function recommend(f: MatchFilters, aiPicks?: { recipeId: string; matchRe
       if (m && !top.includes(m)) top.push(m);
     }
     // Fill remaining slots with the best deterministic scores not already picked.
-    for (const m of ranked) {
+    for (const m of eligible) {
       if (top.length >= 4) break;
       if (!top.includes(m)) top.push(m);
     }
   } else {
-    top.push(...ranked.slice(0, 4));
+    top.push(...eligible.slice(0, 4));
   }
   const ordered = top.slice(0, 4);
 

@@ -7,7 +7,7 @@
 // overrides ingredient compatibility.
 
 import { describe, expect, it } from "vitest";
-import { matchRecipes, type MatchFilters } from "@/lib/engine/match";
+import { matchRecipes, nearRecipes, recommend, type MatchFilters } from "@/lib/engine/match";
 import { resolveIngredientId } from "@/lib/engine/parse";
 import { isAssumedPantry } from "@/lib/data/ingredients";
 import { INGREDIENTS } from "@/lib/data/ingredients";
@@ -162,5 +162,108 @@ describe("ingredient-grounded matching (spec cases)", () => {
     const a = matchRecipes(filters(kitchen)).map((m) => m.recipe.id);
     const b = matchRecipes(filters(kitchen)).map((m) => m.recipe.id);
     expect(a).toEqual(b);
+  });
+});
+
+describe("strict eligibility — primary results are exact matches only", () => {
+  const KITCHEN = ["eggs", "paneer", "tomato", "onion", "rice"];
+  const f = filters(KITCHEN);
+
+  it("TEST 1: Paneer Egg Bhurji (all cores owned) is eligible", () => {
+    const recs = recommend(f);
+    const rec = recs.find((x) => x.recipe.id === BHURJI.id);
+    expect(rec).toBeDefined();
+    expect(rec!.missing.length).toBe(0);
+  });
+
+  it("TEST 2: Soya Chunks Curry never reaches primary results (swap ≠ ownership)", () => {
+    const soya = RECIPES.find((r) => r.id === "soya-chunks-curry");
+    if (!soya) return; // catalog guarantee
+    // Even though the catalog swaps soya-chunks → paneer and paneer is owned,
+    // the user never confirmed soya chunks. recommend() must exclude it.
+    const recs = recommend(f);
+    expect(recs.find((x) => x.recipe.id === soya.id)).toBeUndefined();
+    // It IS a legitimate "almost there" candidate — clearly labeled, separate.
+    const near = nearRecipes(f, 12);
+    expect(near.find((x) => x.recipe.id === soya.id)).toBeDefined();
+  });
+
+  it("TEST 3: recipes with any missing real ingredient are excluded", () => {
+    const ineligible = RECIPES.filter((r) => {
+      const cores = r.ingredients.filter((i) => !i.optional && !isAssumedPantry(i.ingredientId));
+      return cores.some((i) => !f.hasIds.includes(i.ingredientId));
+    }).map((r) => r.id);
+    const recs = recommend(f).map((x) => x.recipe.id);
+    for (const id of ineligible) expect(recs).not.toContain(id);
+  });
+
+  it("TEST 4: every primary recommendation's non-pantry cores ⊆ confirmed set (INVARIANT)", () => {
+    for (const rec of recommend(f)) {
+      const required = rec.recipe.ingredients
+        .filter((i) => !i.optional && !isAssumedPantry(i.ingredientId))
+        .map((i) => i.ingredientId);
+      for (const id of required) {
+        expect(f.hasIds).toContain(id);
+      }
+    }
+  });
+
+  it("TEST 5–6: AI picks outside the eligible slice are discarded", () => {
+    const soya = RECIPES.find((r) => r.id === "soya-chunks-curry");
+    const recs = recommend(f, [
+      { recipeId: soya?.id ?? "soya-chunks-curry", matchReason: ["AI says so"] },
+      { recipeId: "recipe_999_does_not_exist", matchReason: ["hallucinated"] },
+    ]);
+    expect(recs.find((x) => x.recipe.id === (soya?.id ?? "soya-chunks-curry"))).toBeUndefined();
+    expect(recs.find((x) => x.recipe.id === "recipe_999_does_not_exist")).toBeUndefined();
+    // Eligible picks still come through.
+    expect(recs.length).toBeGreaterThan(0);
+  });
+
+  it("TEST 7: zero eligible recipes → empty primary results, never filler", () => {
+    const recs = recommend(filters(["pineapple"]));
+    // Either truly no recipe is pineappple-only, or every returned recipe
+    // must pass the invariant. No random fill either way.
+    for (const rec of recs) {
+      const required = rec.recipe.ingredients
+        .filter((i) => !i.optional && !isAssumedPantry(i.ingredientId))
+        .map((i) => i.ingredientId);
+      expect(required.every((id) => id === "pineapple")).toBe(true);
+    }
+  });
+
+  it("TEST 8: stale-state guard — only the CURRENT confirmed set is honored", () => {
+    // Previous scan contained soya chunks; current confirm does not. The
+    // engine is pure — no cross-call state — so fresh results depend only
+    // on fresh hasIds.
+    const fresh = filters(["eggs", "paneer", "tomato", "onion", "rice"]);
+    const freshIds = recommend(fresh).map((x) => x.recipe.id);
+    // The fresh call must not inherit anything from the stale query —
+    // a recipe needing soya-chunks can't be in fresh results.
+    const soya = RECIPES.find((r) => r.id === "soya-chunks-curry");
+    if (soya) expect(freshIds).not.toContain(soya.id);
+    // And fresh results are computed purely from fresh hasIds (determinism).
+    expect(recommend(fresh).map((x) => x.recipe.id)).toEqual(freshIds);
+  });
+
+  it("TEST 9: duplicate ingredients collapse to one canonical id", () => {
+    const resolved = ["tomato", "tomato", "onion"].map((n) => resolveIngredientId(n));
+    expect(new Set(resolved).size).toBe(2);
+  });
+
+  it("TEST 10: synonym input (tomatoes) matches tomato recipes", () => {
+    const sing = filters(["tomatoes"]);
+    const plur = filters(["tomato"]);
+    expect(sing.hasIds).toEqual(plur.hasIds);
+    expect(recommend(sing).map((x) => x.recipe.id)).toEqual(
+      recommend(plur).map((x) => x.recipe.id),
+    );
+  });
+
+  it("nearRecipes never overlaps primary results", () => {
+    const primary = new Set(recommend(f).map((x) => x.recipe.id));
+    for (const near of nearRecipes(f, 12)) {
+      expect(primary.has(near.recipe.id)).toBe(false);
+    }
   });
 });

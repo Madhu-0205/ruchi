@@ -12,7 +12,7 @@ import { useRuchi, weeklyProgress } from "@/lib/store";
 import { useScreen } from "@/lib/store/screens";
 import { INGREDIENTS, searchIngredients } from "@/lib/data/ingredients";
 import { RECIPES } from "@/lib/data/recipes";
-import { recommend, matchRecipes } from "@/lib/engine/match";
+import { recommend, matchRecipes, nearRecipes } from "@/lib/engine/match";
 import { getRecommendationService, aiConfigured } from "@/lib/ai";
 import { computeCostPerServing, computeNutrition } from "@/lib/engine/nutrition";
 import type { Intent, People } from "@/lib/types";
@@ -83,6 +83,10 @@ export default function HomeScreen() {
 
   // Deterministic engine first — instant recommendations, never a blank UI.
   const recs = useMemo(() => recommend(filters), [filters]);
+  // "Almost there" — 1–2 ingredients away, ALWAYS a separate labeled
+  // section. Never mixed into primary results (strict eligibility gate in
+  // recommend()).
+  const nearRecs = useMemo(() => nearRecipes(filters, 4), [filters]);
 
   // AI-refined list (falls back to the deterministic one until/unless AI lands).
   const [aiRecs, setAiRecs] = useState<ReturnType<typeof recommend> | null>(null);
@@ -442,8 +446,8 @@ export default function HomeScreen() {
           {shown.length === 0 ? (
             <EmptyState
               icon={<Sparkles size={20} />}
-              title="Nothing fits those filters — yet."
-              body="Try more time, a bigger budget, or another ingredient or two."
+              title="No exact matches yet"
+              body="Try adding another ingredient — RUCHI only shows meals you can actually cook right now."
             />
           ) : (
             <StaggerGroup className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3">
@@ -451,19 +455,6 @@ export default function HomeScreen() {
                 const r = rec.recipe;
                 const n = computeNutrition(r, people);
                 const cost = computeCostPerServing(r, people);
-                const missingNames = rec.missing
-                  .map((m) => INGREDIENTS.find((i) => i.id === m)?.name ?? m)
-                  .filter(Boolean);
-                // Validated swap for a missing item — only what the recipe's own
-                // substitution table declares, never invented.
-                const swapFor = (id: string) => {
-                  const rule = rec.recipe.substitutions.find(
-                    (s) => s.missingId === id && s.useId,
-                  );
-                  return rule?.useId
-                    ? INGREDIENTS.find((i) => i.id === rule.useId)?.name ?? null
-                    : null;
-                };
                 return (
                   <StaggerItem key={r.id}>
                     <RecipeCard
@@ -477,28 +468,6 @@ export default function HomeScreen() {
                       reason={rec.reason}
                       onClick={() => go("meal", { recipeId: r.id })}
                     />
-                    {/* Missing core items — tap to add to the kitchen. One tap
-                        turns a one-away pick into a cook-now pick. */}
-                    {rec.missing.length > 0 && (
-                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 px-1.5">
-                        <span className="text-[12px] text-muted">Missing:</span>
-                        {rec.missing.map((id) => {
-                          const name =
-                            INGREDIENTS.find((i) => i.id === id)?.name ?? id;
-                          const swapName = swapFor(id);
-                          return (
-                            <Chip key={id} onClick={() => addItem(id)}>
-                              + {name}
-                              {swapName && (
-                                <span className="font-normal text-muted">
-                                 {" "}· or {swapName.toLowerCase()}
-                                </span>
-                              )}
-                            </Chip>
-                          );
-                        })}
-                      </div>
-                    )}
                     {/* Why this one — makes the pick feel intelligent */}
                     <div className="mt-2 px-1.5">
                       <ul className="space-y-0.5">
@@ -510,7 +479,7 @@ export default function HomeScreen() {
                           </li>
                         ))}
                       </ul>
-                      {missingNames.length > 0 && rec.notNeeded.length > 0 && rec.notNeeded[0] && (
+                      {rec.notNeeded.length > 0 && rec.notNeeded[0] && (
                         <p className="mt-1 text-[12.5px] text-muted">
                           — but you don&apos;t need {rec.notNeeded[0].toLowerCase()}.
                         </p>
@@ -520,6 +489,73 @@ export default function HomeScreen() {
                 );
               })}
             </StaggerGroup>
+          )}
+
+          {/* ── Almost there — clearly labeled, NEVER mixed into primary ── */}
+          {nearRecs.length > 0 && (
+            <section className="mt-10" aria-label="Almost there">
+              <SectionHeading
+                eyebrow="Almost there"
+                title="One or two ingredients away"
+                right={
+                  <span className="text-[12px] font-medium text-muted">
+                    Missing something? Tap to add.
+                  </span>
+                }
+              />
+              <div className="mt-4 space-y-3">
+                {nearRecs.map((rec) => {
+                  const r = rec.recipe;
+                  const n = computeNutrition(r, people);
+                  const cost = computeCostPerServing(r, people);
+                  return (
+                    <Card key={r.id} className="p-4">
+                      <button
+                        type="button"
+                        onClick={() => go("meal", { recipeId: r.id })}
+                        className="flex w-full items-start justify-between gap-3 text-left"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-semibold text-ink">{r.name}</p>
+                          <p className="mt-0.5 text-[12.5px] text-muted">
+                            {rec.minutes} min · {n.protein}g protein · ₹{cost}
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-[12px] font-semibold text-flame">
+                          {rec.reason}
+                        </span>
+                      </button>
+                      {/* Missing core items — tap to add; validated swap shown
+                          when the recipe's own table declares one. */}
+                      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                        <span className="text-[12px] text-muted">Missing:</span>
+                        {rec.missing.map((id) => {
+                          const name = INGREDIENTS.find((i) => i.id === id)?.name ?? id;
+                          const swapName = (() => {
+                            const rule = r.substitutions.find(
+                              (s) => s.missingId === id && s.useId,
+                            );
+                            return rule?.useId
+                              ? INGREDIENTS.find((i) => i.id === rule.useId)?.name ?? null
+                              : null;
+                          })();
+                          return (
+                            <Chip key={id} onClick={() => addItem(id)}>
+                              + {name}
+                              {swapName && (
+                                <span className="font-normal text-muted">
+                                  {" "}· or {swapName.toLowerCase()}
+                                </span>
+                              )}
+                            </Chip>
+                          );
+                        })}
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            </section>
           )}
         </section>
       )}

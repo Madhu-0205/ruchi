@@ -9,13 +9,13 @@ import {
   ImageIcon,
   Keyboard,
   Plus,
-  RotateCcw,
   ScanLine,
   Send,
   Sparkles,
   X,
 } from "lucide-react";
 import { Button, Card, Chip, Note, SectionTitle } from "@/components/ui";
+import { visionDebug } from "@/lib/ai/observability";
 import { useScreen } from "@/lib/store/screens";
 import { useRuchi } from "@/lib/store";
 import { INGREDIENTS, findIngredient } from "@/lib/data/ingredients";
@@ -83,6 +83,8 @@ export default function ScanScreen() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const visionAbortRef = useRef<AbortController | null>(null);
+  // Monotonic generation of the analyze chain — see startAnalyze.
+  const visionGenerationRef = useRef(0);
 
   // Rotating analysis copy — "no generic loading screens"
   useEffect(() => {
@@ -96,7 +98,10 @@ export default function ScanScreen() {
 
   // Leave the flow → cancel any in-flight vision request.
   useEffect(() => {
-    return () => visionAbortRef.current?.abort();
+    return () => {
+      visionGenerationRef.current += 1; // orphan any in-flight chain
+      visionAbortRef.current?.abort();
+    };
   }, []);
 
   const startAnalyze = useCallback(
@@ -106,9 +111,18 @@ export default function ScanScreen() {
       setError(null);
       track("meal_recommendation_viewed", { via: `scan-${source}` });
 
+      // Generation gate: aborting the previous fetch stops its NETWORK work,
+      // but a chain that already resumed past an await would still run its
+      // setPhase afterwards — a stale phase landing after a newer chain's
+      // state corrupts the AnimatePresence phase keys (stuck exit ghosts,
+      // then insertBefore/removeChild NotFoundError on the next commit).
+      // One monotonically-increasing generation makes every stale chain a
+      // no-op at each resumption point.
+      const generation = ++visionGenerationRef.current;
       visionAbortRef.current?.abort();
       const controller = new AbortController();
       visionAbortRef.current = controller;
+      const stale = () => generation !== visionGenerationRef.current || controller.signal.aborted;
 
       let analysis: VisionAnalysis | null = null;
       try {
@@ -117,14 +131,17 @@ export default function ScanScreen() {
           userText: textValue.trim() || undefined,
           signal: controller.signal,
         });
-      } catch {
-        analysis = null; // defensive: the service itself never throws
+      } catch (err) {
+        // NEVER swallow: surface the real error in dev, then fall back.
+        console.error("[RUCHI-VISION] service_threw:", err);
+        analysis = null;
       }
 
-      if (controller.signal.aborted) return; // user left the flow
+      if (stale()) return; // superseded by a newer request or the user left
 
       if (!analysis || analysis.ingredients.length === 0) {
-        // Honest fallback: never fake a vision result.
+        // Honest fallback: never fake a vision result. Dev console carries
+        // the exact [RUCHI-VISION] fallback-reason from the service layer.
         setError(analysis ? "nothing-found" : "vision-unavailable");
         setPhase("text");
         return;
@@ -148,11 +165,26 @@ export default function ScanScreen() {
   const onFilePicked = useCallback(
     async (file: File | undefined, source: "camera" | "upload") => {
       if (!file) return;
+      visionDebug("image-selected", {
+        source,
+        type: file.type,
+        bytes: file.size,
+      });
       const prep = await prepareImageForVision(file);
       if (!prep.ok) {
+        visionDebug(`fallback-reason=image_prep_${prep.reason}`);
         setError(prep.reason === "too-large" ? "too-big" : "bad-image");
         return;
       }
+      // Invalidate any chain still in flight from a previous photo: the new
+      // generation is assigned inside startAnalyze, and the pre-await decode
+      // above must not let an older chain's post-await state win either.
+      visionGenerationRef.current += 1;
+      visionDebug("image-preprocessed", {
+        width: prep.width,
+        height: prep.height,
+        bytes: prep.bytes,
+      });
       void startAnalyze(prep.dataUrl, source);
     },
     [startAnalyze],
@@ -390,6 +422,7 @@ export default function ScanScreen() {
             </div>
             <button
               onClick={() => {
+                visionGenerationRef.current += 1; // orphan any in-flight chain
                 visionAbortRef.current?.abort();
                 setPhase("capture");
               }}
@@ -571,7 +604,7 @@ export default function ScanScreen() {
               <div className="mb-5">
                 <Note tone="gold">
                   {error === "vision-unavailable" &&
-                    "I couldn't read the photo this time. Tell me what you have instead — same result, ten seconds."}
+                    "I couldn't read the photo this time. Tell me what you have instead — I'll find the best meals from your ingredients."}
                   {error === "nothing-found" &&
                     "Couldn't spot any ingredients in that photo. Try a closer shot, or just type them:"}
                   {error === "network" && "That didn't go through. Type what you have instead:"}
@@ -612,12 +645,16 @@ export default function ScanScreen() {
 
             <button
               onClick={() => {
+                visionGenerationRef.current += 1; // orphan any in-flight chain
+                visionAbortRef.current?.abort();
+                setPreviewUrl(null); // header "N detected" chip must not outlive its phase
+                setItems([]);
                 setPhase("capture");
                 setError(null);
               }}
               className="mx-auto mt-8 flex items-center gap-1.5 rounded-full px-4 py-2 text-[13px] font-semibold text-flame transition-colors hover:text-flame-deep"
             >
-              <RotateCcw size={13} /> Try the photo again
+              <ImageIcon size={13} /> Use another photo
             </button>
           </motion.div>
         )}

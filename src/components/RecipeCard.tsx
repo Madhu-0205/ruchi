@@ -18,6 +18,8 @@ export function RecipeCard({
   costPerServing,
   missingCount,
   canCookNow,
+  coreMatched,
+  coreTotal,
   onClick,
   reason,
   size = "md",
@@ -28,6 +30,9 @@ export function RecipeCard({
   costPerServing: number;
   missingCount: number;
   canCookNow: boolean;
+  /** matched/total core-ingredient counts ("4/4 core ingredients available"). */
+  coreMatched?: number;
+  coreTotal?: number;
   onClick: () => void;
   reason?: string;
   size?: "md" | "lg";
@@ -93,7 +98,9 @@ export function RecipeCard({
             {canCookNow ? (
               <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-sage">
                 <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-sage" />
-                Can cook now
+                {coreMatched !== undefined && coreTotal !== undefined
+                  ? `${coreMatched}/${coreTotal} core ingredients available`
+                  : "Can cook now"}
               </span>
             ) : missingCount > 0 ? (
               <span className="text-[12px] text-muted">

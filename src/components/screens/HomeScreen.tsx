@@ -96,7 +96,7 @@ export default function HomeScreen() {
     setAiRecs(null);
   }
 
-  // AI re-rank (Puter): refines order + copy over the SAME candidate set.
+  // AI re-rank: refines order + copy over the SAME candidate set (null → deterministic).
   // Anything the AI returns is validated recipeIds; the engine re-renders
   // instantly if it fails. Never blocks or blocks-out the list.
   useEffect(() => {
@@ -454,6 +454,16 @@ export default function HomeScreen() {
                 const missingNames = rec.missing
                   .map((m) => INGREDIENTS.find((i) => i.id === m)?.name ?? m)
                   .filter(Boolean);
+                // Validated swap for a missing item — only what the recipe's own
+                // substitution table declares, never invented.
+                const swapFor = (id: string) => {
+                  const rule = rec.recipe.substitutions.find(
+                    (s) => s.missingId === id && s.useId,
+                  );
+                  return rule?.useId
+                    ? INGREDIENTS.find((i) => i.id === rule.useId)?.name ?? null
+                    : null;
+                };
                 return (
                   <StaggerItem key={r.id}>
                     <RecipeCard
@@ -462,9 +472,33 @@ export default function HomeScreen() {
                       costPerServing={cost}
                       missingCount={rec.missing.length}
                       canCookNow={rec.missing.length === 0}
+                      coreMatched={rec.coreMatched}
+                      coreTotal={rec.coreTotal}
                       reason={rec.reason}
                       onClick={() => go("meal", { recipeId: r.id })}
                     />
+                    {/* Missing core items — tap to add to the kitchen. One tap
+                        turns a one-away pick into a cook-now pick. */}
+                    {rec.missing.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 px-1.5">
+                        <span className="text-[12px] text-muted">Missing:</span>
+                        {rec.missing.map((id) => {
+                          const name =
+                            INGREDIENTS.find((i) => i.id === id)?.name ?? id;
+                          const swapName = swapFor(id);
+                          return (
+                            <Chip key={id} onClick={() => addItem(id)}>
+                              + {name}
+                              {swapName && (
+                                <span className="font-normal text-muted">
+                                 {" "}· or {swapName.toLowerCase()}
+                                </span>
+                              )}
+                            </Chip>
+                          );
+                        })}
+                      </div>
+                    )}
                     {/* Why this one — makes the pick feel intelligent */}
                     <div className="mt-2 px-1.5">
                       <ul className="space-y-0.5">

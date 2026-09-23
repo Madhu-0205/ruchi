@@ -8,8 +8,8 @@
 // Separation of concerns (enforced by imports):
 // - Supabase (lib/auth/supabase*) owns identity, profiles, completed
 //   meals and streaks. It never touches AI behavior.
-// - Puter (lib/ai/*) is the optional AI layer only. It never touches
-//   account state.
+// - The AI layer (lib/ai/*) is a server-backed helper only. It never
+//   touches account state.
 //
 // Sync model:
 // - Cloud is a mirror of durable data, never the source of truth for

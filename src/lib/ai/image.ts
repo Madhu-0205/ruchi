@@ -6,7 +6,7 @@
 // image instead of a 6 MB camera dump. Keeps enough quality for labels,
 // counts and package text.
 
-import { MAX_IMAGE_BYTES } from "./config";
+import { MAX_IMAGE_BYTES } from "./limits";
 
 export const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 

@@ -22,6 +22,16 @@ function normalize(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
 }
 
+/**
+ * Resolve ONE raw ingredient name to its canonical catalog id — the single
+ * alias/plural normalizer for the whole app (vision results, manual text,
+ * and any future input path all land here). Returns undefined for unknown
+ * names; callers decide how to surface them (uncertain rows, etc.).
+ */
+export function resolveIngredientId(name: string): string | undefined {
+  return matchToken(name)?.id;
+}
+
 /** Match a raw token span to a catalog ingredient by name/aliases. */
 function matchToken(span: string): Ingredient | undefined {
   const s = normalize(span);
@@ -33,11 +43,12 @@ function matchToken(span: string): Ingredient | undefined {
   for (const ing of INGREDIENTS) {
     if (ing.aliases.some((a) => a.toLowerCase() === s)) return ing;
   }
-  // singular/plural tolerance
+  // singular/plural tolerance ("eggs"→egg, "tomatoes"→tomato, "potatoes"→potato)
   const sing = s.endsWith("s") ? s.slice(0, -1) : s;
+  const singEs = s.endsWith("es") ? s.slice(0, -2) : s;
   for (const ing of INGREDIENTS) {
     const pool = [ing.name, ...ing.aliases].map((x) => x.toLowerCase());
-    if (pool.some((p) => p === sing || p === `${sing}es`)) return ing;
+    if (pool.some((p) => p === sing || p === singEs || p === `${sing}es`)) return ing;
   }
   return undefined;
 }

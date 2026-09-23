@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────
 // RUCHI — deterministic cooking-help fallback (pure functions)
 // ─────────────────────────────────────────────────────────────
-// When Puter AI is unavailable (declined, offline, timeout, malformed
+// When AI help is unavailable (offline, timeout, malformed
 // response), Cooking Mode still needs to answer the cook. These answers
 // come from the curated help library plus the recipe's own step cues and
 // substitution table — never invented, and phrased like a person, not a

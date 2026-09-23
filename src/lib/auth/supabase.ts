@@ -2,9 +2,8 @@
 // RUCHI — Supabase client (the ONLY module importing supabase-js)
 // ─────────────────────────────────────────────────────────────
 // Supabase owns RUCHI user identity + durable data (profiles, completed
-// meals, streaks). Puter remains the AI layer only. These are separate
-// concerns and stay separate: no Supabase call decides AI behavior, and
-// no Puter call decides account state.
+// meals, streaks). The AI layer (Gemini via a server route) is separate:
+// no Supabase call decides AI behavior, and no AI call decides account state.
 //
 // Browser-only config by design: the publishable (anon) key is public by
 // contract and safe in the client. Service-role keys must never appear

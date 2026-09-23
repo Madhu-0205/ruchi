@@ -53,7 +53,7 @@ never stores your photo.
 
 - Every control: Exit, Next, Back, Done, Pause/Resume, timer Start, "Need help?"
 - Timer must never block navigation; leaving Cooking Mode mid-recipe is safe
-- "Need help?" answers use the CURRENT step and recipe (Puter AI; if AI is
+- "Need help?" answers use the CURRENT step and recipe (curated help; if AI is
   unavailable a built-in answer appears — this is normal, not an error)
 - One-handed use while standing in a kitchen: buttons reachable, text
   readable at arm's length
@@ -116,7 +116,7 @@ Report especially:
 - Prices and nutrition are **estimates** from typical metro-India
   ingredient costs, not live market data.
 - Email confirmation is required before first sign-in (Supabase default).
-- Photo recognition needs Puter's browser AI authorization on first use;
+- Photo recognition requires the server's GEMINI_API_KEY to be configured;
   declining it never blocks the app.
 
 ## What is intentionally not included

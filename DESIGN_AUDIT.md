@@ -7,7 +7,7 @@
 **Architecture (untouched):**
 - Client-only Next.js 15 App Router, single-page experience; screen router in `lib/store/screens.ts`
 - Zustand store `useRuchi` + derived `deriveAuthFlowState` state machine
-- Deterministic engine (`lib/engine`) — source of truth; Puter = AI only
+- Deterministic engine (`lib/engine`) — source of truth; Gemini (server route) = image analysis only
 - Supabase auth + durable data; boot splash → authFlow routing in `SafeArea`
 
 **Screens:** Home, Discover, Kitchen, Profile, Meal, Scan, Cooking (full-screen overlay), Welcome gate (pre-auth)

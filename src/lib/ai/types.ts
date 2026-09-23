@@ -2,8 +2,8 @@
 // RUCHI — AI layer contracts (provider-agnostic)
 // ─────────────────────────────────────────────────────────────
 // The rest of the application depends ONLY on these types and the service
-// factory in ./index.ts. Puter.js is the current implementation behind
-// them (see puter.ts); swapping providers must not touch the app.
+// factory in ./index.ts. Vision runs server-side (Gemini via
+// /api/analyze-ingredients); swapping providers must not touch the app.
 
 // ── Vision (IngredientVisionService) ────────────────────────
 
@@ -108,7 +108,7 @@ export interface CookingAssistantService {
 
 // ── Shared ──────────────────────────────────────────────────
 
-export type AiProviderName = "puter" | "none";
+export type AiProviderName = "gemini" | "none";
 
 export type AiCapabilityKind = "vision" | "text";
 

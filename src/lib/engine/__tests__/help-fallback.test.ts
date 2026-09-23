@@ -1,5 +1,5 @@
 // Tests for the deterministic cooking-help fallback — the path users get
-// when Puter AI is unavailable, declined, or times out. The copy must stay
+// when AI help is unavailable, declined, or times out. The copy must stay
 // natural and beginner-friendly: no "Safety:" boilerplate, no empty
 // answers, no invented facts. Everything routes to the curated help
 // library or the recipe's own cues/substitutions.

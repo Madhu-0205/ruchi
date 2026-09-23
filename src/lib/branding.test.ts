@@ -5,11 +5,10 @@
 //   1. one canonical logo asset, no stray copies
 //   2. the logo renders on the auth card and Home hero (icon-only)
 //   3. favicon + manifest wiring points at the official mark
-//   4. auth flows never touch Puter; Puter auth helpers have no callers
-//      outside the AI bridge
+//   4. auth flows never touch third-party AI; auth has no AI callers
 
 import { describe, expect, it } from "vitest";
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 const ROOT = path.resolve(__dirname, "../..");
@@ -102,7 +101,7 @@ describe("brand: integration points", () => {
   });
 });
 
-describe("auth boundary: Puter never authenticates", () => {
+describe("auth boundary: no third-party AI in auth flows", () => {
   it("auth modules never import or reference the AI bridge", () => {
     for (const f of [
       "src/lib/auth/supabase.ts",
@@ -114,17 +113,17 @@ describe("auth boundary: Puter never authenticates", () => {
     }
   });
 
-  it("Puter auth helpers have no callers outside the AI bridge", () => {
+  it("no screen calls third-party AI auth helpers", () => {
     for (const f of ["src/components/screens/HomeScreen.tsx", "src/components/screens/ProfileScreen.tsx"]) {
       const src = read(f);
-      expect(src, `${f} must not call puter auth`).not.toMatch(/puterSignIn|puterSignOut|puter\.auth|puter\.user/);
+      expect(src, `${f} must not call AI-provider auth`).not.toMatch(/puterSignIn|puterSignOut|puter\.auth|puter\.user/);
     }
-  });
+  }
+  );
 
-  it("auth screens keep a startup-safe import graph (no eager SDK load)", () => {
+  it("auth screens keep a startup-safe import graph (no eager AI modules)", () => {
     // The auth surfaces (welcome gate, shared card, Profile) import only
-    // Supabase-backed store/auth modules — never a direct lib/ai module
-    // that could touch the Puter SDK at import time.
+    // Supabase-backed store/auth modules — never a direct lib/ai module.
     for (const f of [
       "src/components/AuthCard.tsx",
       "src/components/WelcomeGate.tsx",
@@ -133,5 +132,22 @@ describe("auth boundary: Puter never authenticates", () => {
       const src = read(f);
       expect(src, f).not.toMatch(/from "@\/lib\/ai\//);
     }
+  });
+
+  it("Puter.js is fully removed from the source tree", () => {
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        if (entry === "node_modules" || entry === ".next" || entry.startsWith(".")) continue;
+        const p = path.join(dir, entry);
+        if (statSync(p).isDirectory()) {
+          walk(p);
+        } else if (/\.(ts|tsx|js|jsx|mjs)$/.test(entry) && p !== __filename && /puter/i.test(readFileSync(p, "utf8"))) {
+          offenders.push(p);
+        }
+      }
+    };
+    walk(path.join(ROOT, "src"));
+    expect(offenders, `Puter references remain in: ${offenders.join(", ")}`).toEqual([]);
   });
 });

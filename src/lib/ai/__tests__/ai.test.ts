@@ -3,7 +3,8 @@
 // ─────────────────────────────────────────────────────────────
 // Covers the brief's testing matrix without faking vision in production
 // code: production modules are exercised directly; the only stubs live
-// here, in tests, standing in for the Puter SDK and browser canvas APIs.
+// here, in tests, standing in for the Gemini server route and browser
+// canvas APIs.
 
 import { describe, expect, it } from "vitest";
 import {
@@ -12,7 +13,7 @@ import {
   parseRecommendationPicks,
   parseVisionAnalysis,
 } from "@/lib/ai/schemas";
-import { toVisionAnalysis } from "@/lib/ai/vision";
+import { mapToAnalysis } from "@/lib/ai/vision";
 import { prepareImageForVision } from "@/lib/ai/image";
 import { recommend, matchRecipes } from "@/lib/engine/match";
 import { RECIPES } from "@/lib/data/recipes";
@@ -94,76 +95,45 @@ describe("AI payload validation (schemas)", () => {
 
 // ── 2. Vision: catalog fencing, low confidence, uncertain items ──
 
-describe("vision analysis mapping (toVisionAnalysis)", () => {
-  it("keeps catalog-matched items and marks unmapped high-confidence labels uncertain", () => {
-    const analysis = toVisionAnalysis(
-      {
-        ingredients: [
-          { name: "egg", id: "egg", confidence: 0.97, quantity: "4", quantity_confidence: 0.9 },
-          { name: "dragon fruit", confidence: 0.8 }, // not in catalog
-        ],
-        uncertain_items: [],
-        notes: [],
-      },
-      "test-model",
-      100,
-    );
-    expect(analysis.ingredients[0]).toMatchObject({ catalogId: "egg", uncertain: false });
-    expect(analysis.ingredients[1]).toMatchObject({ catalogId: undefined, uncertain: true });
-    expect(analysis.modelUsed).toBe("test-model");
+describe("vision analysis mapping (mapToAnalysis)", () => {
+  it("maps model names to catalog ids via the shared alias index", () => {
+    const analysis = mapToAnalysis(["eggs", "tomato", "dragon fruit"], 100);
+    const egg = analysis.ingredients.find((i) => i.catalogId === "egg");
+    const tomato = analysis.ingredients.find((i) => i.catalogId === "tomato");
+    expect(egg).toMatchObject({ catalogId: "egg", uncertain: false });
+    expect(tomato).toMatchObject({ catalogId: "tomato", uncertain: false });
+    // "dragon fruit" is not in the catalog → surfaced as an uncertain guess,
+    // never silently dropped or invented into an id.
+    expect(analysis.uncertainItems).toContain("dragon fruit");
+    expect(analysis.modelUsed).toBe("gemini-2.5-flash");
   });
 
-  it("drops fabricated low-confidence ids (anti-hallucination)", () => {
-    const analysis = toVisionAnalysis(
-      {
-        ingredients: [
-          { name: "egg", id: "egg", confidence: 0.95 },
-          { name: "truffle oil", id: "truffle-oil", confidence: 0.4 }, // not in catalog, low conf
-        ],
-        uncertain_items: [],
-        notes: [],
-      },
-      "test-model",
-      0,
-    );
-    expect(analysis.ingredients.map((i) => i.label)).toEqual(["egg"]);
+  it("normalizes case, whitespace and duplicates", () => {
+    const analysis = mapToAnalysis(["  Tomato ", "TOMATO", "tomatoes"], 0);
+    const tomatoRows = analysis.ingredients.filter((i) => i.catalogId === "tomato");
+    expect(tomatoRows).toHaveLength(1);
   });
 
-  it("keeps a modeled id even when the model self-reported low confidence", () => {
-    // confidence below threshold but valid catalog id → uncertain row, kept
-    const analysis = toVisionAnalysis(
-      { ingredients: [{ name: "paneer", id: "paneer", confidence: 0.3 }], uncertain_items: [], notes: [] },
-      "m",
-      0,
-    );
-    // below threshold AND catalog id present → kept but flagged uncertain
-    expect(analysis.ingredients[0]?.catalogId).toBe("paneer");
-    expect(analysis.ingredients[0]?.uncertain).toBe(true);
+  it("never lets the model invent catalog ids", () => {
+    // every returned row must map to a real catalog id or land in uncertain
+    const analysis = mapToAnalysis(["truffle oil", "unicorn meat"], 0);
+    for (const ing of analysis.ingredients) {
+      expect(ing.catalogId).toBeDefined();
+    }
   });
 
-  it("promotes uncertain_items into confirmable rows", () => {
-    const analysis = toVisionAnalysis(
-      {
-        ingredients: [{ name: "egg", id: "egg", confidence: 0.98 }],
-        uncertain_items: ["white powder, could be flour"],
-        notes: ["photo slightly dark"],
-      },
-      "m",
+  it("caps the ingredient list at 12", () => {
+    const analysis = mapToAnalysis(
+      ["egg", "paneer", "tomato", "onion", "potato", "rice", "bread", "curd", "milk", "carrot", "capsicum", "lemon", "garlic", "ginger"],
       0,
     );
-    const last = analysis.ingredients.at(-1);
-    expect(last?.label).toBe("white powder, could be flour");
-    expect(last?.uncertain).toBe(true);
-    expect(analysis.notes).toEqual(["photo slightly dark"]);
+    expect(analysis.ingredients.length).toBeLessThanOrEqual(12);
   });
 
-  it("empty/invalid image scenario: model reports nothing visible", () => {
-    const analysis = toVisionAnalysis(
-      { ingredients: [], uncertain_items: [], notes: [] },
-      "m",
-      0,
-    );
+  it("empty detection list → honest empty result", () => {
+    const analysis = mapToAnalysis([], 0);
     expect(analysis.ingredients).toHaveLength(0);
+    expect(analysis.uncertainItems).toHaveLength(0);
   });
 });
 
@@ -260,33 +230,28 @@ describe("recommend() with AI picks", () => {
   });
 });
 
-// ── 5. Services: Puter failure → null → deterministic fallback ──
+// ── 5. Services: backend failure → null → deterministic fallback ──
 
 // In the node test env the SDK import fails (no window) → services must
 // resolve null and the app-level fallbacks must engage.
 
 describe("service failure → fallback contract", () => {
-  it.skip("vision service resolves null when Puter is unavailable (SDK absent)", async () => {
-    // Covered indirectly: in node env loadPuter() returns null because
-    // window is undefined; the service resolves null, never throws.
-  });
+  it("all services resolve null (not throw) when the backend is unavailable", async () => {
+    const { GeminiIngredientVisionService } = await import("@/lib/ai/vision");
+    const { getRecommendationService, getAssistantService } = await import("@/lib/ai/index");
 
-  it("all three services resolve null (not throw) without Puter", async () => {
-    const { PuterIngredientVisionService } = await import("@/lib/ai/vision");
-    const { PuterMealRecommendationService } = await import("@/lib/ai/recommendations");
-    const { PuterCookingAssistantService } = await import("@/lib/ai/assistant");
+    const vision = new GeminiIngredientVisionService();
+    const recs = getRecommendationService();
+    const assistant = getAssistantService();
 
-    const vision = new PuterIngredientVisionService();
-    const recs = new PuterMealRecommendationService();
-    const assistant = new PuterCookingAssistantService();
+    await expect(recs.isAvailable()).resolves.toBe(false);
+    await expect(assistant.isAvailable()).resolves.toBe(false);
 
-    await expect(vision.isAvailable()).resolves.toBe(false);
-
-    const photo = await import("@/lib/ai/vision").then(() =>
-      vision.detectIngredients({
-        imageDataUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRg==",
-      }),
-    );
+    // In the node test env there is no fetch-mocked server; the client must
+    // reject-to-null gracefully instead of throwing.
+    const photo = await vision.detectIngredients({
+      imageDataUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRg==",
+    });
     expect(photo).toBeNull();
 
     await expect(

@@ -28,6 +28,18 @@ export interface MatchScore {
   substitutable: string[];
   reasons: string[]; // human-readable why-lines
   protein: number;
+  /**
+   * Ingredient-grounded match category. CAN_COOK_NOW = every core
+   * ingredient owned (optional/pantry items never block). ONE_OR_FEW_AWAY =
+   * genuinely relevant but missing 1+ core items. ADAPTABLE = one or more
+   * missing items covered ONLY by the recipe's own validated substitution
+   * rules. The engine never invents swaps. NOT_RELEVANT recipes never
+   * leave matchRecipes — they are filtered before ranking.
+   */
+  category: "CAN_COOK_NOW" | "ONE_OR_FEW_AWAY" | "ADAPTABLE";
+  /** matched/total core-ingredient counts powering the "4/4" card line. */
+  coreMatched: number;
+  coreTotal: number;
 }
 
 /**
@@ -61,11 +73,12 @@ export function matchRecipes(f: MatchFilters): MatchScore[] {
     if (f.diet === "vegetarian" && r.diet !== "veg") continue;
     if (f.diet === "eggetarian" && r.diet === "nonveg") continue;
 
-    // Time gate — a hard limit: a 30-min dish is useless to someone with
-    // 10 minutes, however well it scores.
-    const timeFit = f.timeMax === 0 || r.timeMin <= f.timeMax;
-    // Budget gate
+    // Time & budget are PERSONALIZATION RANKERS, not hard gates (spec:
+    // "lower-cost compatible meals can rank higher among similarly matched
+    // meals"). A ₹58 dish stays visible for someone who owns paneer — it
+    // just ranks below affordable equals. 0 = no limit.
     const cost = computeCostPerServing(r, f.servings);
+    const timeFit = f.timeMax === 0 || r.timeMin <= f.timeMax;
     const budgetFit = f.budgetMax === 0 || cost <= f.budgetMax;
 
     // Ingredient overlap (assumed-pantry items count as owned)
@@ -75,7 +88,21 @@ export function matchRecipes(f: MatchFilters): MatchScore[] {
       .filter((i) => !has.has(i.ingredientId))
       .map((i) => i.ingredientId);
     const coverage = core.length === 0 ? 0 : coreHave.length / core.length;
-    if (coverage < 0.5) continue; // need at least half the core ingredients
+
+    // Relevance gate — ingredient compatibility is the entry ticket, not a
+    // bonus. Coverage ≥ 50% alone is NOT enough: a two-core recipe sharing
+    // one generic ingredient (e.g. the user's only hit being "egg") is not
+    // a recommendation. Require the matches to be meaningful: at least two
+    // distinct owned cores, or full coverage when a recipe is genuinely
+    // minimal (a 1-core dish the user actually owns). Optional and pantry
+    // items never contribute.
+    const relevant =
+      core.length === 0
+        ? false
+        : coverage === 1
+          ? true
+          : coreHave.length >= 2 && coverage >= 0.5;
+    if (!relevant) continue;
 
     // Recipe-aware substitutions: missing items covered by an owned swap
     // stop counting against the match (and earn a small bonus).
@@ -120,9 +147,34 @@ export function matchRecipes(f: MatchFilters): MatchScore[] {
     // users should never see an 11g omelette above a 35g bhurji).
     const protein = computeNutrition(r, f.servings).protein;
     score += Math.min(8, (protein / 50) * 8);
-    if (!budgetFit) score -= 14;
 
-    scores.push({ recipe: r, score, missing, missingCount: missing.length, substitutable, reasons, protein });
+    // Category: full coverage with no swaps → CAN_COOK_NOW. Full coverage
+    // only via the recipe's own validated swaps → ADAPTABLE. Anything still
+    // genuinely missing → ONE_OR_FEW_AWAY. CAN_COOK_NOW is the product's
+    // headline promise ("you can cook this right now") so it must never be
+    // outranked by a swap-dependent recipe — enforced with a strict bonus,
+    // not by trusting the weighted sum.
+    const category: MatchScore["category"] =
+      effectiveMissing === 0
+        ? substitutable.length > 0
+          ? "ADAPTABLE"
+          : "CAN_COOK_NOW"
+        : "ONE_OR_FEW_AWAY";
+    if (category === "CAN_COOK_NOW") score += 25;
+    else if (category === "ADAPTABLE") score -= 5;
+
+    scores.push({
+      recipe: r,
+      score,
+      missing,
+      missingCount: missing.length,
+      substitutable,
+      reasons,
+      protein,
+      category,
+      coreMatched: coreHave.length,
+      coreTotal: core.length,
+    });
   }
 
   scores.sort((a, b) => b.score - a.score || b.protein - a.protein);
@@ -142,6 +194,11 @@ export interface Recommendation {
   difficulty: "easy" | "medium";
   /** Missing item names that are optional in the recipe — “don’t need it”. */
   notNeeded: string[];
+  /** Ingredient-grounded category — drives the "cook right now" framing. */
+  category: MatchScore["category"];
+  /** matched/total core-ingredient counts, e.g. 4/4. */
+  coreMatched: number;
+  coreTotal: number;
 }
 
 const KITCHEN_MICROCOPY = [
@@ -186,7 +243,7 @@ export function whyThis(m: MatchScore, f: MatchFilters): string[] {
  * Top 3–4 recommendations with microcopy + structured why-lines.
  *
  * `aiPicks` (optional) is the AI's selection/order over the candidate list —
- * validated recipeIds only (enforced in lib/ai/recommendations.ts). The AI
+ * validated recipeIds only (enforced by the recommendation service contract). The AI
  * reorders the deterministic top slice and can replace the "why" copy with
  * its matchReason lines; it can never introduce a recipe that didn't score.
  */
@@ -248,6 +305,9 @@ export function recommend(f: MatchFilters, aiPicks?: { recipeId: string; matchRe
       minutes: m.recipe.timeMin,
       difficulty: m.recipe.difficulty,
       notNeeded,
+      category: m.category,
+      coreMatched: m.coreMatched,
+      coreTotal: m.coreTotal,
     };
   });
 }

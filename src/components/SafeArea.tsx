@@ -86,8 +86,18 @@ export default function SafeArea({ children }: { children: React.ReactNode }) {
   }, [screen]);
 
   // App has mounted — the static boot splash is superseded by this gate.
+  // The splash is a React-rendered child of <body> (layout.tsx), so it must
+  // be removed BY REACT's reconciler (via state), never by native DOM calls.
+  // A native `.remove()` desynchronizes React's fiber child list from the
+  // real DOM: body-level commits (Next.js metadata/announcer, top-level
+  // re-renders) then target stale siblings → insertBefore/removeChild
+  // NotFoundError crashes during screen transitions.
+  const [splashGone, setSplashGone] = useState(false);
   useEffect(() => {
-    document.getElementById("boot-splash")?.remove();
+    // rAF: flips one frame after mount (splash already painted), avoiding a
+    // synchronous setState-in-effect while keeping removal React-owned.
+    const id = requestAnimationFrame(() => setSplashGone(true));
+    return () => cancelAnimationFrame(id);
   }, []);
 
   const showNav =
@@ -121,6 +131,17 @@ export default function SafeArea({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="grain min-h-dvh">
+      {/* React-owned boot splash: rendered on the server AND the first client
+          render (SSR/CSR parity), then unmounted through React itself once the
+          app shell takes over. Visually identical to the pre-hydration splash —
+          `splashGone` flips one effect after mount, while the splash is still
+          covering the screen. */}
+      {!splashGone && (
+        <div id="boot-splash" className="boot-splash" aria-hidden>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/ruchi-logo-192.png" alt="" width={72} height={72} />
+        </div>
+      )}
       {nav}
       <main className="relative z-[1] mx-auto w-full max-w-md px-4 pb-28 lg:max-w-6xl lg:px-8 lg:pb-16">
         <AnimatePresence mode="wait" initial={false}>

@@ -2,9 +2,9 @@
 // RUCHI — Supabase auth service (identity + durable user data)
 // ─────────────────────────────────────────────────────────────
 // The app-facing auth interface. The store and screens talk only to
-// these functions — supabase-js types never leak into the UI. Puter is
-// NOT involved here: it stays behind the AI bridge for AI capability
-// only. Separation of concerns, enforced by imports.
+// these functions — supabase-js types never leak into the UI. The AI
+// layer is NOT involved here: authentication is Supabase-only. Separation
+// of concerns, enforced by imports.
 //
 // Behavior when Supabase is not configured (no env vars): every function
 // degrades honestly — sign-up/in report "unconfigured", the listener is

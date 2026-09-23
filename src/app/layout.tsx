@@ -43,13 +43,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${inter.variable} ${fraunces.variable}`}>
       <body>
-        {/* Static loading splash: replaced the moment React mounts. The
-            official mark, subtle — no animation, no fake progress. A raw img
-            is intentional: no lazy-load hop for a pre-hydration element. */}
-        <div id="boot-splash" className="boot-splash">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/ruchi-logo-192.png" alt="" width={72} height={72} />
-        </div>
+        {/* The boot splash lives inside <SafeArea /> (SSR HTML), so React owns
+            it end-to-end: painted from first server byte, removed by React's
+            own reconciler. Never render splash nodes directly under <body> —
+            native removal of React-owned body children desynchronizes the
+            fiber tree and crashes body-level commits (insertBefore/removeChild
+            NotFoundError) during later navigation. */}
         <SafeArea>{children}</SafeArea>
       </body>
     </html>

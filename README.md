@@ -53,7 +53,7 @@ src/
     types/        shared domain types
 ```
 
-- **AI is a service, not the product.** All AI runs through [Puter.js](https://docs.puter.com/AI/) behind provider-agnostic interfaces in `lib/ai` (`IngredientVisionService`, `MealRecommendationService`, `CookingAssistantService`). No API keys exist in the codebase — Puter handles auth in the browser (user-pays). Every capability has a deterministic fallback, so the app is fully functional offline or when Puter is unavailable.
+- **AI is a service, not the product.** Ingredient photo analysis runs on Google Gemini (`gemini-2.5-flash`) through the server-only route `POST /api/analyze-ingredients` behind a provider-agnostic interface (`IngredientVisionService`) in `lib/ai`. The `GEMINI_API_KEY` lives only on the server — never in the browser. Every capability has a deterministic fallback, so the app is fully functional offline or when the API is unavailable.
 - **Nutrition and cost are always labeled estimates.** Values come from per-100g reference tables, never presented as medical or financial facts.
 - **Cooking Mode owns the screen.** No nav, no clutter — one instruction, one cue, one timer.
 
@@ -63,24 +63,22 @@ src/
 src/lib/ai/
   index.ts            public surface — the ONLY module the app imports
   types.ts            provider-agnostic service interfaces
-  config.ts           AI_PROVIDER / VISION_MODEL / TEXT_MODEL (env-tunable)
-  puter.ts            the only file that imports @heyputer/puter.js
-  prompts.ts          engineered prompts (vision catalog fence, JSON contracts)
+  vision.ts           IngredientVisionService: photo → Gemini server route → validated ingredients
+  image.ts            client-side validate/resize/compress before upload
+  limits.ts           shared client/server limits (image size, timeouts)
   schemas.ts          Zod contracts — every AI payload is untrusted until parsed
-  vision.ts           IngredientVisionService: photo → validated ingredients
-  recommendations.ts  MealRecommendationService: re-ranks curated candidates
-  assistant.ts        CookingAssistantService: step-aware cooking help
-  image.ts            client-side validate/resize/compress before any request
   observability.ts    dev-only lifecycle logs (never images, text, or keys)
+src/app/api/analyze-ingredients/route.ts
+                      server-only Gemini call: multipart image → structured JSON
 ```
 
-**Vision model: `gpt-5-nano` (default).** Chosen for image understanding (`modalities.input` includes `image` in Puter's catalog), low latency on the critical photo path, strong JSON adherence for the strict ingredient schema, and the lowest input cost in Puter's OpenAI tier — the user pays per token, so cheap and fast is the premium experience. Change with `VISION_MODEL` / `TEXT_MODEL`; alternates are validated against Puter's model catalog (`modalities.input`) before use.
+**Vision model: `gemini-2.5-flash`.** Chosen for image understanding, low latency on the critical photo path, and native structured-output support (JSON schema + JSON MIME type), which keeps the ingredient list clean and machine-checkable. The server normalizes every response (trim, lowercase, dedupe, cap at 12) before the app maps names onto its ingredient catalog through the existing alias index.
 
-**Hard rules:** AI output is untrusted — Zod-validated or rejected; the AI may only pick recipe ids from the deterministic candidate list (never invent recipes); nutrition/cost/servings are always computed by the app from reference tables, never generated; vision failure degrades to the text path ("Tell me what you have") and never fakes results.
+**Hard rules:** AI output is untrusted — Zod-validated or rejected; detected ingredient names must map to the app's catalog or they surface as uncertain rows the user confirms; nutrition/cost/servings are always computed by the app from reference tables, never generated; analysis failure degrades to the text path ("Tell me what you have") and never fakes results.
 
 ## Accounts & cloud sync (Supabase)
 
-Supabase owns RUCHI user identity and durable data; Puter remains the AI layer **only** — the two are separate concerns and never cross:
+Supabase owns RUCHI user identity and durable data; the AI layer (Gemini, server-side) remains **only** an analysis helper — the two are separate concerns and never cross:
 
 ```
 src/lib/auth/

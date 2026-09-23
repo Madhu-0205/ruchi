@@ -15,7 +15,7 @@
     "verify:e2e": "node supabase/tests/e2e-sim.mjs"
   },
   "dependencies": {
-    "@heyputer/puter.js": "^2.6.3",
+    "@google/genai": "^2.24.0",
     "@supabase/supabase-js": "^2.116.0",
     "framer-motion": "^12.23.0",
     "lucide-react": "^0.525.0",

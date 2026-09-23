@@ -15,17 +15,7 @@ export type AiEventKind =
   | "assistant_request"
   | "assistant_success"
   | "assistant_failure"
-  | "chat_failure"
-  | "sdk_loaded"
-  | "fallback_triggered"
-  // Puter auth-popup lifecycle (development diagnostics)
-  | "auth_popup_open"
-  | "auth_popup_blocked"
-  | "auth_start"
-  | "auth_success"
-  | "auth_cancel"
-  | "auth_failure"
-  | "auth_timeout";
+  | "fallback_triggered";
 
 interface AiEvent {
   kind: AiEventKind;
@@ -53,29 +43,6 @@ export function logAiEvent(
   }
 }
 
-/** Live snapshot of the Puter sign-in state for diagnostics. */
-export function authStateSnapshot(): Record<string, string | number | boolean | undefined> {
-  if (typeof window === "undefined") return { env: "server" };
-  const puter = (
-    window as unknown as {
-      puter?: {
-        authToken?: string | null;
-        env?: string;
-        puterAuthState?: { isPromptOpen?: boolean; authGranted?: boolean | null };
-      };
-    }
-  ).puter;
-  return {
-    hasSdk: Boolean(puter),
-    signedIn: Boolean(puter?.authToken),
-    env: puter?.env,
-    promptOpen: puter?.puterAuthState?.isPromptOpen,
-    // authGranted's null ("prompt never shown") is normalized to undefined for a
-    // compact event payload.
-    authGranted: puter?.puterAuthState?.authGranted ?? undefined,
-  };
-}
-
 export function recentAiEvents(n = 20): AiEvent[] {
   return recent.slice(-n).reverse();
 }
@@ -83,4 +50,29 @@ export function recentAiEvents(n = 20): AiEvent[] {
 /** Test hook. */
 export function clearAiEventsForTests(): void {
   recent = [];
+}
+
+// ── Vision pipeline diagnostics (development only) ──────────
+// Emits [RUCHI-VISION] stage markers so a fallback can always be traced to
+// the exact failing stage. Never logs image data, tokens, or credentials —
+// metadata (dimensions, byte sizes, stage names, error messages) only.
+// Production builds emit nothing.
+export function visionDebug(
+  stage: string,
+  detail?: Record<string, string | number | boolean | undefined>,
+): void {
+  if (process.env.NODE_ENV === "production") return;
+  console.info(`[RUCHI-VISION] ${stage}`, detail ?? "");
+}
+
+/** Last reason the vision chain fell back (dev diagnostics). */
+let lastVisionFallback: string | null = null;
+
+export function recordVisionFallback(reason: string): void {
+  lastVisionFallback = reason;
+  visionDebug(`fallback-reason=${reason}`);
+}
+
+export function getLastVisionFallback(): string | null {
+  return lastVisionFallback;
 }

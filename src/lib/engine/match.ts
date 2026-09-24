@@ -140,6 +140,13 @@ export function matchRecipes(f: MatchFilters): MatchScore[] {
     let intentHits = 0;
     for (const t of r.tags) if (intents.has(t)) { score += 9; intentHits++; }
     if (intentHits >= 2) score += 6;
+    // "indian" is a cuisine intent, not a recipe tag — every dish in the
+    // catalog is Indian or Indian-adjacent, so it acts as a gentle tie-break
+    // toward the classic regional kitchens rather than a filter.
+    if (intents.has("indian")) {
+      const c = r.cuisine.toLowerCase();
+      if (c.includes("indian") || c.includes("hyderabadi") || c.includes("chettinad") || c.includes("andhra")) score += 5;
+    }
     if (r.difficulty === "easy") score += 5;
     if (effectiveMissing === 0) score += 12; // cook-now bonus
     if (substitutable.length > 0) score += 4 * substitutable.length; // swap-aware bonus
@@ -240,6 +247,17 @@ export function whyThis(m: MatchScore, f: MatchFilters): string[] {
 }
 
 /**
+ * "Not sure? Let RUCHI choose" — the single best deterministic pick for
+ * this kitchen: same strict eligibility as recommend(), settled with the
+ * matcher's tie-breakers. No AI involved; the engine stays the source of
+ * truth, this just ends the comparison so the user can start cooking.
+ */
+export function chooseForMe(f: MatchFilters): Recommendation | null {
+  const [best] = recommend(f);
+  return best ?? null;
+}
+
+/**
  * "Almost there" candidates — recipes the user is 1–2 confirmed ingredients
  * away from. ALWAYS a separate, clearly-labeled section; NEVER mixed into
  * primary results (see recommend()'s strict eligibility gate). Swap-covered
@@ -279,13 +297,17 @@ export function nearRecipes(f: MatchFilters, limit = 4): Recommendation[] {
 }
 
 /**
- * Top 3–4 recommendations with microcopy + structured why-lines.
+ * Top recommendations with microcopy + structured why-lines (exactly
+ * RECOMMENDATION_LIMIT strong picks).
  *
  * `aiPicks` (optional) is the AI's selection/order over the candidate list —
  * validated recipeIds only (enforced by the recommendation service contract). The AI
  * reorders the deterministic top slice and can replace the "why" copy with
  * its matchReason lines; it can never introduce a recipe that didn't score.
  */
+/** Product decision: the first recommendation screen shows exactly three. */
+export const RECOMMENDATION_LIMIT = 3;
+
 export function recommend(f: MatchFilters, aiPicks?: { recipeId: string; matchReason: string[] }[]): Recommendation[] {
   const ranked = matchRecipes(f);
 
@@ -311,13 +333,13 @@ export function recommend(f: MatchFilters, aiPicks?: { recipeId: string; matchRe
     }
     // Fill remaining slots with the best deterministic scores not already picked.
     for (const m of eligible) {
-      if (top.length >= 4) break;
+      if (top.length >= RECOMMENDATION_LIMIT) break;
       if (!top.includes(m)) top.push(m);
     }
   } else {
-    top.push(...eligible.slice(0, 4));
+    top.push(...eligible.slice(0, RECOMMENDATION_LIMIT));
   }
-  const ordered = top.slice(0, 4);
+  const ordered = top.slice(0, RECOMMENDATION_LIMIT);
 
   return ordered.map((m, idx) => {
     let reason: string;
@@ -349,7 +371,15 @@ export function recommend(f: MatchFilters, aiPicks?: { recipeId: string; matchRe
       recipe: m.recipe,
       missing: m.missing,
       reason,
-      why: aiReasons.length > 0 ? [...aiReasons, ...whyThis(m, f)].slice(0, 5) : whyThis(m, f),
+      // Hard cap regardless of pick shape: at most RECOMMENDATION_LIMIT
+      // entries ever reach the card, so a malformed AI payload can only
+      // reorder copy, never lengthen the list. Deterministic why-lines get
+      // the same treatment — the card shows the top three, non-redundant
+      // (cost and time are already on the card body).
+      why: [...(aiReasons.length > 0 ? aiReasons : []), ...whyThis(m, f)].slice(
+        0,
+        RECOMMENDATION_LIMIT,
+      ),
       usesCount,
       protein: computeNutrition(m.recipe, f.servings).protein,
       costPerServing: computeCostPerServing(m.recipe, f.servings),

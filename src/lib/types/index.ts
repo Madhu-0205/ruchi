@@ -53,7 +53,8 @@ export type Intent =
   | "quick"
   | "budget"
   | "comfort"
-  | "spicy";
+  | "spicy"
+  | "indian";
 
 /** Meal slot — drives Discover sections and search. */
 export type RecipeCategory = "breakfast" | "lunch" | "dinner" | "snack" | "drink";

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Camera, Search, Sparkles, X } from "lucide-react";
+import { Camera, Search, Sparkles, X, Shuffle } from "lucide-react";
 import { Card, Chip, EmptyState, SectionHeading, SectionTitle, ShimmerSweep } from "@/components/ui";
 import { RuchiLogo } from "@/components/RuchiLogo";
 import { FoodVisual } from "@/components/FoodVisual";
@@ -12,18 +12,19 @@ import { useRuchi, weeklyProgress } from "@/lib/store";
 import { useScreen } from "@/lib/store/screens";
 import { INGREDIENTS, searchIngredients } from "@/lib/data/ingredients";
 import { RECIPES } from "@/lib/data/recipes";
-import { recommend, matchRecipes, nearRecipes } from "@/lib/engine/match";
+import { recommend, matchRecipes, nearRecipes, chooseForMe } from "@/lib/engine/match";
 import { getRecommendationService, aiConfigured } from "@/lib/ai";
+import { kitchenGoodLine, intentWhisper } from "@/lib/personality";
 import { computeCostPerServing, computeNutrition } from "@/lib/engine/nutrition";
 import type { Intent, People } from "@/lib/types";
 
 const INTENTS: { id: Intent; label: string }[] = [
-  { id: "high-protein", label: "High protein" },
-  { id: "healthy", label: "Healthy" },
-  { id: "quick", label: "Quick" },
-  { id: "budget", label: "Budget" },
-  { id: "comfort", label: "Comfort" },
-  { id: "spicy", label: "Spicy" },
+  { id: "high-protein", label: "💪 High Protein" },
+  { id: "healthy", label: "🥗 Healthy" },
+  { id: "quick", label: "⚡ Under 15 min" },
+  { id: "budget", label: "💰 Budget" },
+  { id: "indian", label: "🍛 Indian" },
+  { id: "comfort", label: "😋 Comfort Food" },
 ];
 
 const TIMES = [10, 15, 30, 45] as const;
@@ -66,6 +67,11 @@ export default function HomeScreen() {
   const [budget, setBudget] = useState<number>(prefs.budget);
   const [people, setPeople] = useState<People>(prefs.defaultServings);
   const [showSearch, setShowSearch] = useState(false);
+  // Find My Meal is an explicit action (Phase 5/23): the deterministic list is
+  // always computed (never a blank UI), but the results section only reveals
+  // once the user presses the CTA — changing chips afterwards never fires a
+  // request on its own.
+  const [findMyMealUsed, setFindMyMealUsed] = useState(false);
 
   const results = useMemo(() => searchIngredients(query), [query]);
 
@@ -141,6 +147,25 @@ export default function HomeScreen() {
   const hasInventory = inventoryIds.length > 0;
   const isEmptyKitchen = inventoryIds.length === 0;
 
+  // Phase 5: Find My Meal is the one primary action. It reveals the results
+  // section and scrolls to it; the deterministic list itself was already
+  // computed (instant), so the press never waits on anything.
+  const findMyMeal = () => {
+    setFindMyMealUsed(true);
+    requestAnimationFrame(() => {
+      document
+        .getElementById("ruchi-results")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
+  // Phase 6: "Not sure? Let RUCHI choose" — the engine's single best pick,
+  // straight into cooking mode. No comparing, no second-guessing.
+  const ruchiChooses = () => {
+    const best = chooseForMe(filters);
+    if (best) go("cooking", { recipeId: best.recipe.id });
+  };
+
   // ── Editorial sections from the real catalog (deterministic, no AI) ──
   // Rail sections exclude drinks: the food rails read best as plated meals,
   // and drinks surface in Discover's own collections.
@@ -196,6 +221,9 @@ export default function HomeScreen() {
           <p className="mt-5 max-w-md text-[16px] leading-relaxed text-muted lg:text-[17px]">
             Show RUCHI your ingredients and get meals that actually fit your time, preferences
             and budget.
+          </p>
+          <p className="mt-3 max-w-md text-[15px] font-medium text-ink-soft">
+            ₹280 delivery or a ₹82 dinner? 👀
           </p>
 
           <div className="mt-7 flex flex-col gap-3 sm:flex-row lg:mt-9">
@@ -282,6 +310,11 @@ export default function HomeScreen() {
         >
           What&apos;s in your kitchen?
         </SectionTitle>
+        {hasInventory && (
+          <p className="-mt-1 mb-3 text-[14.5px] font-medium text-ink-soft">
+            {kitchenGoodLine(inventoryIds.length)}
+          </p>
+        )}
 
         <AnimatePresence initial={false}>
           {showSearch && (
@@ -375,7 +408,7 @@ export default function HomeScreen() {
             className="mt-8 space-y-6"
           >
             <div>
-              <p className="mb-2 text-[15px] font-semibold">What are you feeling?</p>
+              <p className="mb-2 text-[15px] font-semibold">What are you looking for?</p>
               <div className="flex flex-wrap gap-2">
                 {INTENTS.map((it) => (
                   <Chip
@@ -426,31 +459,42 @@ export default function HomeScreen() {
                 </div>
               </div>
             </div>
+
+            {/* The one primary action — everything above is optional. */}
+            <div className="rounded-3xl border border-line bg-surface p-5 shadow-soft">
+              <button
+                onClick={findMyMeal}
+                className="relative inline-flex w-full items-center justify-center gap-2.5 overflow-hidden rounded-2xl bg-flame px-8 py-4 text-[16px] font-bold text-white shadow-cta transition-all duration-200 hover:bg-flame-deep active:scale-[0.98]"
+              >
+                <ShimmerSweep />
+                <Sparkles size={18} strokeWidth={2.2} />
+                <span className="relative">Find My Meal ✨</span>
+              </button>
+              <p className="mt-3 text-center text-[13.5px] font-medium text-muted">
+                {intentWhisper(intents)}
+              </p>
+            </div>
           </motion.div>
         )}
       </section>
 
-      {/* ── Recommendations ──────────────────────────────── */}
-      {hasInventory && (
-        <section className="mt-14" aria-live="polite">
+      {/* ── Recommendations — revealed by Find My Meal ───── */}
+      {hasInventory && findMyMealUsed && (
+        <section className="mt-14 scroll-mt-24" id="ruchi-results" aria-live="polite">
           <SectionHeading
             eyebrow="From your kitchen"
-            title="Cook this tonight"
-            right={
-              <span className="text-[12px] font-medium text-muted">
-                {shown.length} pick{shown.length === 1 ? "" : "s"} for you
-              </span>
+            title={`I found ${shown.length} meal${shown.length === 1 ? "" : "s"} for you.`
             }
           />
 
           {shown.length === 0 ? (
             <EmptyState
               icon={<Sparkles size={20} />}
-              title="No exact matches yet"
-              body="Try adding another ingredient — RUCHI only shows meals you can actually cook right now."
+              title="I couldn't find a great match"
+              body="Try adding another ingredient or relaxing your filters — RUCHI only shows meals you can actually cook right now."
             />
           ) : (
-            <StaggerGroup className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3">
+            <StaggerGroup className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {shown.map((rec) => {
                 const r = rec.recipe;
                 const n = computeNutrition(r, people);
@@ -460,35 +504,39 @@ export default function HomeScreen() {
                     <RecipeCard
                       recipe={r}
                       protein={n.protein}
+                      calories={n.calories}
                       costPerServing={cost}
                       missingCount={rec.missing.length}
                       canCookNow={rec.missing.length === 0}
                       coreMatched={rec.coreMatched}
                       coreTotal={rec.coreTotal}
                       reason={rec.reason}
+                      tags={r.tags}
+                      why={rec.why}
+                      notNeeded={rec.notNeeded}
                       onClick={() => go("meal", { recipeId: r.id })}
+                      onCook={() => go("cooking", { recipeId: r.id })}
                     />
-                    {/* Why this one — makes the pick feel intelligent */}
-                    <div className="mt-2 px-1.5">
-                      <ul className="space-y-0.5">
-                        {rec.why.slice(0, 3).map((w) => (
-                          <li key={w} className="flex gap-2 text-[12.5px] leading-relaxed text-muted">
-                            <span className="shrink-0 text-sage" aria-hidden>✓</span>
-                            <span className="sr-only">Why: </span>
-                            {w}
-                          </li>
-                        ))}
-                      </ul>
-                      {rec.notNeeded.length > 0 && rec.notNeeded[0] && (
-                        <p className="mt-1 text-[12.5px] text-muted">
-                          — but you don&apos;t need {rec.notNeeded[0].toLowerCase()}.
-                        </p>
-                      )}
-                    </div>
                   </StaggerItem>
                 );
               })}
             </StaggerGroup>
+          )}
+
+          {/* Phase 6: can't decide? The engine picks, cooking starts. */}
+          {shown.length > 0 && (
+            <div className="mt-7 flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+              <button
+                onClick={ruchiChooses}
+                className="inline-flex items-center gap-2 rounded-2xl border border-line-strong bg-surface px-6 py-3.5 text-[15px] font-semibold text-ink shadow-soft transition-all duration-200 hover:border-ink/25 hover:shadow-lifted active:scale-[0.98]"
+              >
+                <Shuffle size={16} className="text-flame" aria-hidden />
+                Not sure? Let RUCHI choose ✨
+              </button>
+              <p className="text-[13px] leading-relaxed text-muted">
+                Picks the best match from your kitchen and starts the step-by-step cook.
+              </p>
+            </div>
           )}
 
           {/* ── Almost there — clearly labeled, NEVER mixed into primary ── */}
@@ -608,6 +656,7 @@ export default function HomeScreen() {
               key={r.id}
               recipe={r}
               protein={computeNutrition(r, 1).protein}
+                calories={computeNutrition(r, 1).calories}
               costPerServing={computeCostPerServing(r, 1)}
               missingCount={0}
               canCookNow={false}
@@ -639,6 +688,7 @@ export default function HomeScreen() {
                 recipe={r}
                 layout="vertical"
                 protein={computeNutrition(r, 1).protein}
+                calories={computeNutrition(r, 1).calories}
                 costPerServing={computeCostPerServing(r, 1)}
                 missingCount={0}
                 canCookNow={false}
@@ -659,6 +709,7 @@ export default function HomeScreen() {
                 recipe={r}
                 layout="vertical"
                 protein={computeNutrition(r, 1).protein}
+                calories={computeNutrition(r, 1).calories}
                 costPerServing={computeCostPerServing(r, 1)}
                 missingCount={0}
                 canCookNow={false}
@@ -679,6 +730,7 @@ export default function HomeScreen() {
                 recipe={r}
                 layout="vertical"
                 protein={computeNutrition(r, 1).protein}
+                calories={computeNutrition(r, 1).calories}
                 costPerServing={computeCostPerServing(r, 1)}
                 missingCount={0}
                 canCookNow={false}

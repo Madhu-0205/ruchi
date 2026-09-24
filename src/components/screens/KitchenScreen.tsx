@@ -136,11 +136,13 @@ export default function KitchenScreen() {
                   key={rec.recipe.id}
                   recipe={rec.recipe}
                   protein={n.protein}
+                  calories={n.calories}
                   costPerServing={cost}
                   missingCount={rec.missing.length}
                   canCookNow={rec.missing.length === 0}
                   reason={rec.reason}
                   onClick={() => go("meal", { recipeId: rec.recipe.id })}
+                  onCook={() => go("cooking", { recipeId: rec.recipe.id })}
                 />
               );
             })}

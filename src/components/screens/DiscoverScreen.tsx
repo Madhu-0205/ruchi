@@ -303,6 +303,7 @@ export default function DiscoverScreen() {
               key={r.id}
               recipe={r}
               protein={n.protein}
+              calories={n.calories}
               costPerServing={cost}
               missingCount={missingCount}
               canCookNow={missingCount === 0}

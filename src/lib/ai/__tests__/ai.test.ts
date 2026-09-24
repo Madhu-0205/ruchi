@@ -183,7 +183,7 @@ describe("recommend() with AI picks", () => {
     ]);
     expect(reversed[0]?.recipe.id).toBe(b!.recipe.id);
     expect(reversed.map((r) => r.recipe.id)).toEqual(
-      expect.arrayContaining(ranked.slice(0, 4).map((m) => m.recipe.id)),
+      expect.arrayContaining(ranked.slice(0, 3).map((m) => m.recipe.id)),
     );
   });
 

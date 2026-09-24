@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
-import { animate, useReducedMotion } from "framer-motion";
+import { animate, motion, useReducedMotion } from "framer-motion";
 
 // ─────────────────────────────────────────────────────────────
 // RUCHI — design primitives
@@ -106,19 +106,22 @@ export function Chip({
   children: ReactNode;
   className?: string;
 }) {
+  const reduce = useReducedMotion();
   return (
-    <button
+    <motion.button
       type="button"
       onClick={onClick}
       aria-pressed={selected}
-      className={`rounded-full px-4 py-2 text-sm font-medium transition-all duration-150 active:scale-95 ${
+      whileTap={reduce ? undefined : { scale: 0.96 }}
+      transition={{ type: "spring", stiffness: 500, damping: 30 }}
+      className={`inline-flex min-h-[44px] items-center rounded-full px-4 py-2 text-sm font-medium transition-all duration-150 ${
         selected
           ? "bg-ink text-cream shadow-soft"
           : "bg-surface text-ink border border-line hover:border-line-strong hover:shadow-soft"
       } ${className}`}
     >
       {children}
-    </button>
+    </motion.button>
   );
 }
 

@@ -1,9 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import {
-  ArrowLeft,
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";import { ArrowLeft,
   CircleHelp,
   Flame,
   Pause,
@@ -14,12 +12,14 @@ import {
 import { useScreen } from "@/lib/store/screens";
 import { useRuchi, computeStreak } from "@/lib/store";
 import { getRecipe } from "@/lib/data/recipes";
+import { findIngredient } from "@/lib/data/ingredients";
 import { getHelp } from "@/lib/data/help";
 import { getAssistantService, aiConfigured } from "@/lib/ai";
 import { track } from "@/lib/engine/analytics";
 import { computeCost, computeNutrition } from "@/lib/engine/nutrition";
 import { scaleStepText } from "@/lib/engine/units";
 import { GENERIC_QUESTIONS, fallbackAnswer } from "@/lib/engine/help-fallback";
+import { minutesToDinner, MADE_IT_HEADLINE, DIDNT_ORDER_LINE } from "@/lib/personality";
 import { RingProgress } from "@/components/ui";
 import type { AiHelpAnswer } from "@/lib/data/schemas";
 import type { RecipeStep } from "@/lib/types";
@@ -76,6 +76,10 @@ export default function CookingMode() {
   const [aiHelp, setAiHelp] = useState<AiHelpAnswer | null>(null);
   const [servings, setServings] = useState(1);
   const [streakAtDone, setStreakAtDone] = useState(0);
+  // "I don't have this" — grounded substitution answer for the current step's
+  // ingredients, sourced ONLY from the recipe's own substitution table and
+  // the curated help library. No invented swaps, ever (Phase 14).
+  const [subHelp, setSubHelp] = useState<string | null>(null);
 
   const recipe = recipeId ? getRecipe(recipeId) : undefined;
   const steps = recipe?.steps ?? [];
@@ -83,6 +87,11 @@ export default function CookingMode() {
 
   // Per-step timer; resets when the step changes
   const countdown = useCountdown(step?.durationMin);
+
+  // Rough time-to-dinner from this step on — the personality line's number.
+  const minutesLeft = steps
+    .slice(stepIndex)
+    .reduce((sum, s) => sum + (s.durationMin ?? 0), 0);
 
   // Steps are written for 2 servings; scale quantity mentions for 1/3/4.
   const factor = servings / 2;
@@ -93,6 +102,26 @@ export default function CookingMode() {
   }, [recipe, stepIndex]);
 
   const nutrition = recipe ? computeNutrition(recipe, 1) : null;
+
+  // Build a grounded, per-step "I don't have this" answer: named ingredient
+  // rules from the recipe's substitution table first, then the curated
+  // library's general answer. Step helpIds excluded — those are how-tos,
+  // not missing-ingredient advice.
+  const ingredientSubHelp = (): string | null => {
+    if (!recipe || !step) return null;
+    const lines = recipe.substitutions.map((s) => {
+      const missingName = findIngredient(s.missingId)?.name ?? s.missingId;
+      return `${missingName}: ${s.message}`;
+    });
+    if (lines.length === 0) return getHelp("substitute")?.answer ?? null;
+    return lines.join(" ");
+  };
+
+  const openSubHelp = () => {
+    if (!recipe) return;
+    track("recipe_help_requested", { recipeId: recipe.id, question: "I don't have this" });
+    setSubHelp(ingredientSubHelp());
+  };
 
   const openHelp = async (question: string) => {
     setHelpOpen(true);
@@ -231,6 +260,13 @@ export default function CookingMode() {
             ))}
           </div>
 
+          {/* Personality — sparse, only when there's a real estimate */}
+          {minutesLeft > 0 && (
+            <p className="mb-5 text-[13px] font-medium text-cream/50">
+              {minutesToDinner(minutesLeft)}
+            </p>
+          )}
+
           <AnimatePresence mode="wait">
             <motion.div
               key={stepIndex}
@@ -315,6 +351,20 @@ export default function CookingMode() {
                     <p className="mt-1.5 text-[15.5px] leading-relaxed text-cream/90">{step.lookFor}</p>
                   </div>
 
+                  {/* "I don't have this" — grounded swaps for the current step */}
+                  <button
+                    onClick={openSubHelp}
+                    className="mt-3 w-full rounded-3xl border border-cream/15 bg-cream/[0.05] p-4 text-left transition-colors hover:bg-cream/10"
+                  >
+                    <span className="flex items-center gap-2 text-[14.5px] font-semibold text-cream/90">
+                      <CircleHelp size={15} className="text-cream/60" aria-hidden />
+                      I don&apos;t have this
+                    </span>
+                    <span className="mt-1 block text-[12.5px] text-cream/55">
+                      See what works instead — swaps come from this recipe only.
+                    </span>
+                  </button>
+
                   {/* Safety */}
                   {step.safety && (
                     <div className="mt-3 rounded-3xl border border-flame/30 bg-flame/10 p-5">
@@ -353,7 +403,7 @@ export default function CookingMode() {
               }}
               className="flex-1 rounded-2xl bg-flame px-5 py-3 text-[15px] font-bold text-white shadow-cta transition-all hover:bg-flame-deep active:scale-[0.99]"
             >
-              {isLast ? "I'm done cooking 🎉" : "Next step"}
+              {isLast ? "I made it 🎉" : "Next →"}
             </button>
             {!isLast && (
               <button
@@ -372,6 +422,50 @@ export default function CookingMode() {
           </button>
         </div>
       </div>
+
+      {/* "I don't have this" sheet — recipe's own substitution table only */}
+      <AnimatePresence>
+        {subHelp && (
+          <motion.div
+            className="fixed inset-0 z-[60] flex items-end bg-black/50"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setSubHelp(null)}
+          >
+            <motion.div
+              className="w-full rounded-t-3xl bg-ink border-t border-cream/15 p-5 pb-[max(env(safe-area-inset-bottom),20px)] text-cream"
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 30, stiffness: 300 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <h3 className="text-[17px] font-bold">Don&apos;t have it?</h3>
+                  <p className="mt-0.5 text-[13px] text-cream/60">
+                    Here are the swaps from this recipe.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setSubHelp(null)}
+                  aria-label="Close substitutions"
+                  className="p-1 text-cream/60 hover:text-cream"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="rounded-2xl bg-cream/[0.06] p-4">
+                <p className="text-[15px] leading-relaxed">{subHelp}</p>
+                <p className="mt-2 text-[12px] text-cream/50">
+                  Swaps from this recipe only — RUCHI won&apos;t guess with your dinner.
+                </p>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Help sheet */}
       <AnimatePresence>
@@ -469,6 +563,7 @@ function CompletionView({
   onHome: () => void;
   onAgain: () => void;
 }) {
+  const reduceMotion = useReducedMotion();
   const saved = Math.max(0, deliveryCost - cost);
   const streakLine =
     streakDays >= 2
@@ -478,49 +573,62 @@ function CompletionView({
         : null;
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-ink text-cream">
-      <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+      <div className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
         <motion.div
-          initial={{ scale: 0.6, opacity: 0 }}
+          initial={reduceMotion ? false : { scale: 0.6, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: "spring", damping: 12 }}
+          transition={{ type: "spring", damping: 14 }}
           className="text-6xl"
         >
           🎉
         </motion.div>
-        <h1 className="mt-6 font-display text-display-xl font-semibold">
-          That wasn&apos;t a recipe.
-          <br />
-          <span className="accent-italic">That was dinner.</span>
-        </h1>
-        <p className="mt-4 max-w-xs text-[15px] leading-relaxed text-cream/70">
-          {recipeName} — {protein}g protein, {calories} kcal, on the table by you.
+        <h1 className="mt-6 font-display text-display-xl font-semibold">{MADE_IT_HEADLINE}</h1>
+        <p className="mt-2.5 font-display text-[19px] font-medium text-cream/90">{recipeName}</p>
+        <p className="mt-1.5 text-[14.5px] font-medium text-cream/60">
+          {protein}g protein · {calories} kcal
         </p>
 
-        <div className="mt-9 w-full max-w-xs rounded-3xl border border-cream/10 bg-cream/[0.08] p-5">
-          <p className="text-[12px] font-semibold uppercase tracking-wider text-cream/60">
-            You didn&apos;t just cook dinner
-          </p>
-          <p className="mt-2 font-display text-[34px] font-semibold text-gold-soft">₹{saved} saved</p>
-          <p className="mt-2 text-[13px] text-cream/60">
-            vs ₹{deliveryCost} delivery. Estimated, but still yours.
-          </p>
+        {/* The honest math — three estimate rows, saving highlighted */}
+        <div className="mt-8 w-full max-w-xs overflow-hidden rounded-3xl border border-cream/10 bg-cream/[0.07]">
+          <div className="flex items-center justify-between px-5 py-3.5">
+            <span className="text-[13.5px] text-cream/60">Estimated cost</span>
+            <span className="text-[15px] font-bold">₹{cost}</span>
+          </div>
+          <div className="flex items-center justify-between border-t border-cream/[0.07] px-5 py-3.5">
+            <span className="text-[13.5px] text-cream/60">Estimated delivery</span>
+            <span className="text-[15px] font-bold text-cream/70">₹{deliveryCost}</span>
+          </div>
+          <div className="flex items-center justify-between border-t border-cream/[0.07] bg-gold/10 px-5 py-3.5">
+            <span className="text-[13.5px] font-semibold text-gold-soft">Estimated saving</span>
+            <span className="font-display text-[22px] font-semibold text-gold-soft">₹{saved}</span>
+          </div>
         </div>
+        <p className="mt-2.5 text-[12px] text-cream/45">Estimates, not invoices. But yours.</p>
+
+        <motion.p
+          initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.35, duration: 0.4 }}
+          className="mt-6 whitespace-pre-line text-[15px] font-semibold leading-relaxed text-cream/90"
+        >
+          {DIDNT_ORDER_LINE}
+        </motion.p>
 
         {streakLine && (
-          <p className="mt-5 text-[14px] font-semibold text-gold-soft">{streakLine}</p>
+          <p className="mt-4 text-[14px] font-semibold text-gold-soft">{streakLine}</p>
         )}
 
         <button
-          className="mt-8 w-full max-w-xs rounded-2xl bg-cream px-5 py-4 text-[15px] font-bold text-ink transition-colors hover:bg-white"
-          onClick={onHome}
+          className="mt-8 w-full max-w-xs rounded-2xl bg-cream px-5 py-4 text-[15px] font-bold text-ink transition-colors hover:bg-white active:scale-[0.99]"
+          onClick={onAgain}
         >
-          Back to my kitchen
+          Cook this again
         </button>
         <button
-          onClick={onAgain}
+          onClick={onHome}
           className="mt-3 w-full max-w-xs rounded-2xl py-3 text-[15px] font-semibold text-cream/70 transition-colors hover:text-cream"
         >
-          Cook something else
+          Back to kitchen
         </button>
       </div>
     </div>

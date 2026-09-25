@@ -74,12 +74,33 @@ const appRpcStreak = (t, date) => t.query("select public.record_completed_meal_d
 const appFetchStreak = (t, uid) =>
   one(t, "select current_streak, longest_streak from public.cooking_streaks where user_id = $1", [uid]);
 
+// ── Real Cooking Stats (migration 0003 shapes) ───────────────
+/** Mirrors recordCookingCompletion(): RPC with a session token. */
+const appRecordCompletion = (t, tok, m) =>
+  one(
+    t,
+    `select public.record_cooking_completion(
+       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10) as outcome`,
+    [tok, m.recipeId, m.recipeName, new Date(m.cookedAt).toISOString(), m.localDate,
+     m.servings, m.proteinG, m.calories, m.cost, m.deliveryCompare],
+  );
+const appFetchStats = (t) =>
+  one(t, "select meals_cooked, total_saved, current_streak, longest_streak from public.cooking_stats");
+const appFetchCompletions = (t, uid) =>
+  t.query("select * from public.cooking_completions where user_id = $1 order by completed_at desc", [uid]);
+
 // ── Boot: DB + emulation + migration + two users ─────────────
 sh(`create database "${DB}"`);
 {
   const boot = new pg.Client({ ...ADMIN, database: DB });
   await boot.connect();
-  for (const f of ["supabase/tests/local_emulation.sql", "supabase/migrations/0001_ruchi_init.sql"]) {
+  for (const f of [
+    "supabase/tests/local_emulation.sql",
+    "supabase/migrations/0001_ruchi_init.sql",
+    "supabase/migrations/0002_beta_feedback.sql",
+    "supabase/migrations/0003_cooking_stats.sql",
+    "supabase/migrations/0004_notification_prefs.sql",
+  ]) {
     await boot.query(await import("node:fs/promises").then((fs) => fs.readFile(f, "utf8")));
   }
   for (const email of ["a@test.dev", "b@test.dev"]) {
@@ -224,6 +245,234 @@ try {
   if (anonWrite.blocked && anonWrite.message.includes("row-level security"))
     pass("anonymous: cannot insert meals (RLS rejection)");
   else fail(`anon insert unexpectedly allowed: ${JSON.stringify(anonWrite)}`);
+
+  // ═════════════════════════════════════════════════════════════
+  // 9. REAL COOKING STATS (migration 0003)
+  // ═════════════════════════════════════════════════════════════
+  const TODAY = new Date();
+  const day = (offset) => {
+    const d = new Date(TODAY);
+    d.setDate(d.getDate() - offset);
+    return d.toISOString().slice(0, 10);
+  };
+  const at = (offset, hour) => {
+    const [y, m, d] = day(offset).split("-").map(Number);
+    return new Date(y, m - 1, d, hour).getTime();
+  };
+
+  // 9a. Record A's completion → 'recorded'; duplicate session → 'duplicate',
+  //     and it must NOT create a second row (idempotency).
+  let outcome = await request(USER_A.id, (t) => appRecordCompletion(t, "sess-aaa", {
+    recipeId: "paneer-egg-bhurji", recipeName: "Paneer Egg Bhurji",
+    cookedAt: at(0, 21), localDate: day(0), servings: 1,
+    proteinG: 38, calories: 520, cost: 82, deliveryCompare: 303,
+  }));
+  if (outcome?.outcome === "recorded") pass("stats: completion recorded");
+  else fail(`stats: expected 'recorded', got ${JSON.stringify(outcome)}`);
+
+  outcome = await request(USER_A.id, (t) => appRecordCompletion(t, "sess-aaa", {
+    recipeId: "paneer-egg-bhurji", recipeName: "Paneer Egg Bhurji",
+    cookedAt: at(0, 21), localDate: day(0), servings: 1,
+    proteinG: 38, calories: 520, cost: 82, deliveryCompare: 303,
+  }));
+  const aCompRows = (await request(USER_A.id, (t) => appFetchCompletions(t, USER_A.id))).rows;
+  if (outcome?.outcome === "duplicate" && aCompRows.length === 1)
+    pass("stats: double-clicked completion is idempotent (1 row, 'duplicate')");
+  else fail(`stats: idempotency broken: outcome=${JSON.stringify(outcome)} rows=${aCompRows.length}`);
+
+  // 9b. Savings derived SERVER-side: greatest(0, compare − cost).
+  if (aCompRows[0].savings_inr === 221)
+    pass("stats: savings derived server-side (303 − 82 = 221)");
+  else fail(`stats: wrong savings ${aCompRows[0].savings_inr}`);
+  await request(USER_A.id, (t) => appRecordCompletion(t, "sess-clamp", {
+    recipeId: "egg-rice", recipeName: "Egg Rice", cookedAt: at(0, 0),
+    localDate: day(0), servings: 1, proteinG: 17, calories: 549,
+    cost: 500, deliveryCompare: 100,
+  }));
+  const clampRow = (await request(USER_A.id, (t) =>
+    t.query("select savings_inr from public.cooking_completions where session_token='sess-clamp'"))).rows[0];
+  if (clampRow && clampRow.savings_inr === 0)
+    pass("stats: negative saving clamped to 0 (never invented)");
+  else fail(`stats: savings clamp broken: ${JSON.stringify(clampRow)}`);
+
+  // 9c. More sessions on consecutive days → streak from COMPLETIONS.
+  await request(USER_A.id, (t) => appRecordCompletion(t, "sess-bbb", {
+    recipeId: "egg-rice", recipeName: "Egg Rice",
+    cookedAt: at(1, 20), localDate: day(1), servings: 1,
+    proteinG: 17, calories: 549, cost: 17, deliveryCompare: 190,
+  }));
+  await request(USER_A.id, (t) => appRecordCompletion(t, "sess-ccc", {
+    recipeId: "dal-rice", recipeName: "Dal Rice",
+    cookedAt: at(2, 20), localDate: day(2), servings: 1,
+    proteinG: 12, calories: 350, cost: 14, deliveryCompare: 160,
+  }));
+  let stats = await request(USER_A.id, (t) => appFetchStats(t));
+  // The view unions A's 2 legacy completed_meals rows (migration-0001 log)
+  // with the new completions: 2 legacy + 4 sessions (aaa, clamp, bbb, ccc) = 6.
+  const expectedA = { meals: 6, saved: 221 + 221 + 139 + 173 + 146, streak: 3 };
+  if (stats.meals_cooked === expectedA.meals && stats.current_streak === expectedA.streak && stats.longest_streak === 3)
+    pass(`stats: 3 consecutive days → current=3, longest=3, meals=${expectedA.meals} (legacy + new)`);
+  else fail(`stats: streak math wrong: ${JSON.stringify(stats)}`);
+  if (stats.total_saved === expectedA.saved)
+    pass("stats: total saved aggregates every record's server-derived saving");
+  else fail(`stats: savings aggregate wrong: ${stats.total_saved} != ${expectedA.saved}`);
+
+  // 9d. A gap breaks the CURRENT streak but LONGEST persists.
+  await request(USER_A.id, (t) => appRecordCompletion(t, "sess-old", {
+    recipeId: "poha", recipeName: "Poha",
+    cookedAt: at(10, 9), localDate: day(10), servings: 1,
+    proteinG: 5, calories: 270, cost: 9, deliveryCompare: 120,
+  }));
+  stats = await request(USER_A.id, (t) => appFetchStats(t));
+  if (stats.current_streak === 3 && stats.longest_streak === 3)
+    pass("stats: old completion → longest preserved, current unaffected");
+  else fail(`stats: gap handling wrong: ${JSON.stringify(stats)}`);
+
+  // 9e. "Refresh": brand-new session (fresh connection) sees identical stats.
+  const statsRefresh = await request(USER_A.id, (t) => appFetchStats(t));
+  if (statsRefresh.meals_cooked === stats.meals_cooked && statsRefresh.total_saved === stats.total_saved)
+    pass("stats: values persist across a fresh session (refresh-safe)");
+  else fail("stats: refresh drift");
+
+  // 9f. User isolation: B sees none of A's completions and B's stats start clean.
+  const bComps = (await request(USER_B.id, (t) => appFetchCompletions(t, USER_B.id))).rows;
+  if (bComps.length === 0) pass("stats: B cannot read any of A's completions");
+  else fail(`LEAK: B reads ${bComps.length} of A's completions`);
+  const bStats = await request(USER_B.id, (t) => appFetchStats(t));
+  // B's own records: 1 legacy completed_meals row (step 5) — A's 5 are invisible.
+  if (bStats && bStats.meals_cooked === 1 && bStats.total_saved === 221)
+    pass("stats: B's view contains only B's records");
+  else fail(`stats: B's view polluted: ${JSON.stringify(bStats)}`);
+
+  // 9g. B cannot attach a completion to A's user id (session-id CHECK + RLS).
+  const forge = await request(USER_B.id, async (t) => {
+    try {
+      await t.query(
+        `insert into public.cooking_completions
+           (user_id, session_token, session_id, recipe_id, recipe_name, local_date,
+            cost_inr, delivery_compare_inr)
+         values ($1,'forged','s_'||$2::text||':forged','x','x',current_date,10,50)`,
+        [USER_A.id, USER_B.id]);
+      return { blocked: false };
+    } catch (e) {
+      return { blocked: true, message: String(e.message) };
+    }
+  });
+  if (forge.blocked && forge.message.includes("row-level security"))
+    pass("stats: B cannot insert a completion under A's id (RLS with check)");
+  else fail(`LEAK: forged completion accepted: ${JSON.stringify(forge)}`);
+
+  // 9h. Anonymous callers get nothing: no stats, no RPC.
+  const anonStats = await request(null, (t) => t.query("select count(*)::int as n from public.cooking_stats"));
+  if (anonStats.rows[0].n === 0)
+    pass("stats: anonymous reads no stats (security_invoker + RLS)");
+  else fail(`stats: anon sees ${anonStats.rows[0].n} stat rows`);
+  const anonRpc = await request(null, async (t) => {
+    try {
+      await t.query("select public.record_cooking_completion('x','x','x',now(),current_date,1,0,0,0,0)");
+      return { blocked: false };
+    } catch (e) {
+      return { blocked: true, message: String(e.message) };
+    }
+  });
+  if (anonRpc.blocked) pass("stats: anonymous cannot call the completion RPC");
+  else fail("stats: anon RPC executed");
+
+  // ════ 10. NOTIFICATION PREFS (migration 0004) ═════════════
+  // Defaults OFF, RLS own-rows-only, channel/quiet-hours constraints,
+  // and the attention-state mirror updates (never creates) rows.
+
+  // 10a. A's row does not exist until explicit opt-in.
+  const noRow = await request(USER_A.id, (t) =>
+    t.query("select count(*)::int as n from public.notification_prefs"));
+  if (noRow.rows[0].n === 0) pass("notif: no prefs row exists before opt-in (defaults off)");
+  else fail(`notif: unexpected pre-opt-in row(s): ${noRow.rows[0].n}`);
+
+  // 10b. Opt-in: insert own row; constraints shape it.
+  await request(USER_A.id, (t) =>
+    t.query(
+      "insert into public.notification_prefs (user_id, channels) values ($1, $2::jsonb)",
+      [USER_A.id, JSON.stringify({ web_push: true })],
+    ));
+  const aPrefs = await request(USER_A.id, (t) =>
+    one(t, "select channels, quiet_hours, max_per_week from public.notification_prefs where user_id = $1", [USER_A.id]));
+  if (aPrefs.channels.web_push === true && aPrefs.quiet_hours.start === 22 && aPrefs.max_per_week === 2)
+    pass("notif: opt-in row created; quiet hours + weekly cap default sane");
+  else fail(`notif: opt-in defaults wrong: ${JSON.stringify(aPrefs)}`);
+
+  // 10c. Bad channel key and non-boolean flag are rejected by the CHECK.
+  const badChannel = await request(USER_A.id, async (t) => {
+    try {
+      await t.query(
+        "update public.notification_prefs set channels = $2::jsonb where user_id = $1",
+        [USER_A.id, JSON.stringify({ sms: true })],
+      );
+      return { blocked: false };
+    } catch (e) {
+      return { blocked: true, message: String(e.message) };
+    }
+  });
+  if (badChannel.blocked) pass("notif: unknown channel key rejected by constraint");
+  else fail("notif: bad channel accepted — CHECK missing");
+
+  const badQuiet = await request(USER_A.id, async (t) => {
+    try {
+      await t.query(
+        "update public.notification_prefs set quiet_hours = $2::jsonb where user_id = $1",
+        [USER_A.id, JSON.stringify({ start: 30, end: 8 })],
+      );
+      return { blocked: false };
+    } catch (e) {
+      return { blocked: true };
+    }
+  });
+  if (badQuiet.blocked) pass("notif: out-of-range quiet hour rejected by constraint");
+  else fail("notif: bad quiet_hours accepted — CHECK missing");
+
+  // 10d. Attention-state mirror: update never creates; RLS blocks B from A.
+  await request(USER_A.id, (t) =>
+    t.query(
+      "update public.notification_prefs set attention_state = $2::jsonb where user_id = $1",
+      [USER_A.id, JSON.stringify({ lastShown: { type: "unused_ingredients", recipeId: "egg-rice", at: 1790000000000 } })],
+    ));
+  const mirror = await request(USER_A.id, (t) =>
+    one(t, "select attention_state from public.notification_prefs where user_id = $1", [USER_A.id]));
+  if (mirror.attention_state.lastShown?.type === "unused_ingredients")
+    pass("notif: attention-state mirror round-trips");
+  else fail(`notif: mirror write failed: ${JSON.stringify(mirror)}`);
+
+  const bMirrorTouch = await request(USER_B.id, async (t) => {
+    try {
+      const r = await t.query(
+        "update public.notification_prefs set attention_state = '{}'::jsonb where user_id = $1",
+        [USER_A.id],
+      );
+      return { rows: r.rowCount };
+    } catch (e) {
+      return { rows: -1, blocked: true };
+    }
+  });
+  if (bMirrorTouch.rows === 0 || bMirrorTouch.blocked)
+    pass("notif: B cannot touch A's prefs (RLS)");
+  else fail(`LEAK: B updated A's prefs (${bMirrorTouch.rows} rows)`);
+
+  // 10e. Anonymous: nothing at all.
+  const anonPrefs = await request(null, (t) =>
+    t.query("select count(*)::int as n from public.notification_prefs"));
+  if (anonPrefs.rows[0].n === 0) pass("notif: anonymous reads no prefs");
+  else fail(`LEAK: anon reads ${anonPrefs.rows[0].n} prefs rows`);
+
+  // 10f. updated_at advances on update (trigger).
+  const t1 = await request(USER_A.id, (t) =>
+    one(t, "select updated_at from public.notification_prefs where user_id = $1", [USER_A.id]));
+  await new Promise((r) => setTimeout(r, 30));
+  await request(USER_A.id, (t) =>
+    t.query("update public.notification_prefs set max_per_week = 3 where user_id = $1", [USER_A.id]));
+  const t2 = await request(USER_A.id, (t) =>
+    one(t, "select updated_at from public.notification_prefs where user_id = $1", [USER_A.id]));
+  if (new Date(t2.updated_at) > new Date(t1.updated_at))
+    pass("notif: updated_at advances on update (trigger)");
+  else fail("notif: updated_at did not advance");
 } catch (e) {
   fail(`unexpected: ${e.message}`);
 } finally {

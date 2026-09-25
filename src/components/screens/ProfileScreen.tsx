@@ -5,6 +5,10 @@ import { CloudUpload, Loader2, LogOut } from "lucide-react";
 import { Button, Card, Pill, SectionTitle } from "@/components/ui"; // SectionHeading added where used below
 import AuthCard from "@/components/AuthCard";
 import { useRuchi, streak, weeklyProgress } from "@/lib/store";
+import { FoodVisual } from "@/components/FoodVisual";
+import { RECIPES } from "@/lib/data/recipes";
+import { useScreen } from "@/lib/store/screens";
+import type { CookingStatsRow, NotificationChannel } from "@/lib/auth/supabase-data";
 import { insertBetaFeedback, type FeedbackTopic } from "@/lib/auth/supabase-data";
 import { buildNudges, weeklySummaryLine } from "@/lib/engine/nudge";
 import type {
@@ -64,6 +68,7 @@ export default function ProfileScreen() {
     markNudgesRead,
     account,
     cloudSyncAt,
+    cloudStats,
     syncError,
     signOut,
     syncNow,
@@ -80,6 +85,7 @@ export default function ProfileScreen() {
   const lastCookedAt = useRuchi((s) => s.lastCookedAt);
   const lastNudges = useRuchi((s) => s.lastNudges);
   const upsertNudges = useRuchi((s) => s.upsertNudges);
+  const go = useScreen((s) => s.go);
 
   const submitFeedback = async () => {
     setFeedbackStatus("sending");
@@ -131,16 +137,15 @@ export default function ProfileScreen() {
   return (
     <div className="pt-8 lg:pt-14">
       <header className="mb-7 lg:mb-10">
-        <h1 className="font-display text-display-xl font-semibold">
+        <p className="text-[12px] font-bold uppercase tracking-[0.2em] text-flame">Your RUCHI</p>
+        <h1 className="mt-1.5 font-display text-display-xl font-semibold">
           {account?.displayName
             ? `Hey ${account.displayName}`
             : name
               ? `Hey ${name}`
               : "Your profile"}
         </h1>
-        <p className="mt-2 text-[15px] text-muted">
-          {weeklySummaryLine(week.meals)}
-        </p>
+        <p className="mt-2 text-[15px] text-muted">{weeklySummaryLine(week.meals)}</p>
       </header>
 
       {/* Account — lightweight, appears where persistence becomes real */}
@@ -183,6 +188,12 @@ export default function ProfileScreen() {
           <AuthCard />
         )}
       </Card>
+
+      {/* ── Real Cooking Stats — server-authoritative identity strip ───── */}
+      {account && <CookingStatsCard stats={cloudStats} syncError={syncError} />}
+
+      {/* ── Notifications — quiet opt-in, defaults OFF ───── */}
+      {account && <NotificationOptIn />}
 
       {/* This week */}
       {history.length > 0 && (
@@ -357,29 +368,45 @@ export default function ProfileScreen() {
           </Card>
         ) : (
           <div className="space-y-2">
-            {history.slice(0, 8).map((h) => (
-              <Card key={h.id} className="p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-[15px] font-semibold">{h.recipeName}</p>
-                    <p className="text-[12px] text-muted">
-                      {new Date(h.cookedAt).toLocaleDateString(undefined, {
-                        weekday: "short",
-                        day: "numeric",
-                        month: "short",
-                      })}{" "}
-                      · {h.servings} serving{h.servings > 1 ? "s" : ""}
-                    </p>
+            {history.slice(0, 8).map((h) => {
+              const r = RECIPES.find((x) => x.id === h.recipeId);
+              return (
+                <Card key={h.id} className="p-4">
+                  <div className="flex items-center gap-3">
+                    {r ? (
+                      <FoodVisual recipe={r} emojiClassName="text-2xl" className="h-12 w-12 shrink-0 rounded-xl" />
+                    ) : (
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-cream-deep text-xl">🍽️</div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[15px] font-semibold">{r?.name ?? h.recipeName}</p>
+                      <p className="text-[12px] text-muted">
+                        {new Date(h.cookedAt).toLocaleDateString(undefined, {
+                          weekday: "short",
+                          day: "numeric",
+                          month: "short",
+                        })}{" "}
+                        · {h.servings} serving{h.servings > 1 ? "s" : ""}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <div className="text-right">
+                        <p className="text-[14px] font-bold text-sage">{h.proteinG}g protein</p>
+                        <p className="text-[12px] text-gold">saved ~₹{Math.max(0, h.deliveryCompareCost - h.cost)}</p>
+                      </div>
+                      <button
+                        onClick={() => go("cooking", { recipeId: h.recipeId })}
+                        disabled={!r}
+                        className="rounded-full bg-flame-soft px-3 py-1.5 text-[12px] font-bold text-flame-deep transition-colors hover:bg-flame hover:text-white disabled:pointer-events-none disabled:opacity-40"
+                        aria-label={`Cook ${r?.name ?? h.recipeName} again`}
+                      >
+                        Cook again
+                      </button>
+                    </div>
                   </div>
-                  <div className="shrink-0 text-right">
-                    <p className="text-[14px] font-bold text-sage">{h.proteinG}g protein</p>
-                    <p className="text-[12px] text-gold">
-                      saved ~₹{Math.max(0, h.deliveryCompareCost - h.cost)}
-                    </p>
-                  </div>
-                </div>
-              </Card>
-            ))}
+                </Card>
+              );
+            })}
           </div>
         )}
       </div>
@@ -454,5 +481,160 @@ export default function ProfileScreen() {
         రుచి — let&apos;s cook. 🔥
       </p>
     </div>
+  );
+}
+
+// ── Notification opt-in — quiet, explicit, defaults OFF ──────
+// One row per channel the product can eventually deliver through.
+// Web push is the only live-planned channel; the others are placeholders
+// that stay inert until their adapters exist (docs/NOTIFICATION_LAYER.md).
+
+const NOTIF_CHANNELS: { id: NotificationChannel; label: string; hint: string; live: boolean }[] = [
+  { id: "web_push", label: "Dinner nudges", hint: "When your kitchen has a real idea — rarely, never spam.", live: true },
+  { id: "email", label: "Email", hint: "Coming later.", live: false },
+];
+
+function NotificationOptIn() {
+  const channels = useRuchi((s) => s.notificationChannels);
+  const setChannel = useRuchi((s) => s.setNotificationChannel);
+  return (
+    <Card className="mb-6 p-5 sm:p-6">
+      <SectionTitle
+        right={
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted">optional</span>
+        }
+      >
+        Notifications
+      </SectionTitle>
+      <div className="mt-3 space-y-3">
+        {NOTIF_CHANNELS.map((ch) => {
+          const on = channels[ch.id] === true;
+          return (
+            <div key={ch.id} className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className={`text-[14.5px] font-semibold ${ch.live ? "" : "text-muted"}`}>
+                  {ch.label}
+                </p>
+                <p className="mt-0.5 text-[12.5px] text-muted">{ch.hint}</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={on}
+                aria-label={`${ch.label} notifications`}
+                disabled={!ch.live}
+                onClick={() => setChannel(ch.id, !on)}
+                className={`relative h-8 w-14 shrink-0 rounded-full transition-colors duration-200 disabled:opacity-40 ${
+                  on ? "bg-sage" : "bg-line-strong"
+                }`}
+              >
+                <span
+                  aria-hidden
+                  className={`absolute top-1 h-6 w-6 rounded-full bg-white shadow-soft transition-all duration-200 ${
+                    on ? "left-7" : "left-1"
+                  }`}
+                />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-4 border-t border-line pt-3 text-[12px] leading-relaxed text-muted">
+        Off by default. If you turn these on, RUCHI will only reach out when it has
+        something genuinely useful — and a quiet-hours limit always applies.
+      </p>
+    </Card>
+  );
+}
+
+// ── Real Cooking Stats (server-authoritative) ────────────────
+// Numbers come from the cooking_stats view over the user's real
+// completion records — never localStorage, never demo values. Savings
+// are the engine's estimate vs the catalog's delivery comparison,
+// derived server-side. Labeled as estimates, as everywhere in RUCHI.
+
+function CookingStatsCard({
+  stats,
+  syncError,
+}: {
+  stats: CookingStatsRow | null;
+  syncError: boolean;
+}) {
+  // Graceful, honest states: nothing recorded yet / sync hiccup / live data.
+  if (!stats) {
+    if (syncError) {
+      return (
+        <Card className="mb-6 p-5">
+          <p className="text-[14px] font-semibold">Cooking stats couldn&apos;t load just now.</p>
+          <p className="mt-1 text-[13px] text-muted">
+            Your meals are safe — stats will catch up on the next sync.
+          </p>
+        </Card>
+      );
+    }
+    return (
+      <Card className="mb-6 p-5">
+        <p className="text-[14px] font-semibold">No cooked meals yet.</p>
+        <p className="mt-1 text-[13px] text-muted">
+          Finish your first recipe and your real stats live here — meals, streak, savings.
+        </p>
+      </Card>
+    );
+  }
+
+  const fmtDate = (ms: number) =>
+    new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+
+  return (
+    <Card className="warm-glow mb-6 p-5 sm:p-6">
+      <SectionTitle
+        right={
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted">
+            from your real cooks
+          </span>
+        }
+      >
+        Cooking stats
+      </SectionTitle>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div>
+          <p className="font-display text-[26px] font-semibold leading-none">
+            {stats.mealsCooked}
+          </p>
+          <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+            meals cooked
+          </p>
+        </div>
+        <div>
+          <p className="font-display text-[26px] font-semibold leading-none text-flame-deep">
+            {stats.currentStreak}
+          </p>
+          <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+            current streak
+          </p>
+        </div>
+        <div>
+          <p className="font-display text-[26px] font-semibold leading-none text-ink">
+            {stats.longestStreak}
+          </p>
+          <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+            longest streak
+          </p>
+        </div>
+        <div>
+          <p className="font-display text-[26px] font-semibold leading-none text-gold">
+            ₹{stats.totalSaved}
+          </p>
+          <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+            saved (est.)
+          </p>
+        </div>
+      </div>
+      <p className="mt-4 border-t border-line pt-3.5 text-[12px] leading-relaxed text-muted">
+        Counted from meals you actually finished while signed in — one per cook, even if the
+        button double-fires. Savings estimated from ingredient costs vs typical delivery prices.
+        {stats.lastCompletedAt ? ` Last cook: ${fmtDate(stats.lastCompletedAt)}.` : ""}
+      </p>
+    </Card>
   );
 }

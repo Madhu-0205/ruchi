@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";import { ArrowLeft,
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { ArrowLeft,
   CircleHelp,
   Flame,
   Pause,
@@ -19,7 +20,15 @@ import { track } from "@/lib/engine/analytics";
 import { computeCost, computeNutrition } from "@/lib/engine/nutrition";
 import { scaleStepText } from "@/lib/engine/units";
 import { GENERIC_QUESTIONS, fallbackAnswer } from "@/lib/engine/help-fallback";
-import { minutesToDinner, MADE_IT_HEADLINE, DIDNT_ORDER_LINE } from "@/lib/personality";
+import {
+  minutesToDinner,
+  MADE_IT_HEADLINE,
+  DIDNT_ORDER_LINE,
+  stepCheer,
+  milestoneLine,
+  reassuranceLine,
+  completionEcho,
+} from "@/lib/personality";
 import { RingProgress } from "@/components/ui";
 import type { AiHelpAnswer } from "@/lib/data/schemas";
 import type { RecipeStep } from "@/lib/types";
@@ -65,10 +74,29 @@ function useCountdown(minutes?: number) {
 
 export default function CookingMode() {
   const recipeId = useScreen((s) => s.recipeId);
-  const back = useScreen((s) => s.back);
+  const screenBack = useScreen((s) => s.back);
   const go = useScreen((s) => s.go);
 
+  // Exiting mid-recipe is a REAL paused session — the context engine may
+  // offer a genuine "Resume cooking" later. Completed or step-0 exits
+  // clear/park nothing (nothing meaningfully started).
+  const back = () => {
+    const clear = useRuchi.getState().clearPausedCooking;
+    if (recipe && stepIndex > 0 && stepIndex < (recipe.steps?.length ?? 0)) {
+      useRuchi.getState().pauseCookingSession(recipe.id, stepIndex, recipe.steps.length);
+    } else {
+      clear();
+    }
+    screenBack();
+  };
+
   const [stepIndex, setStepIndex] = useState(0);
+  // One idempotency token per cooking session, minted at mount — every
+  // completion write (however many clicks) reuses it; the server
+  // deduplicates. Consumed server-side once recorded.
+  useEffect(() => {
+    useRuchi.getState().beginCookingSession();
+  }, []);
   const [completed, setCompleted] = useState(false);
   const [celebrated, setCelebrated] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -80,10 +108,30 @@ export default function CookingMode() {
   // ingredients, sourced ONLY from the recipe's own substitution table and
   // the curated help library. No invented swaps, ever (Phase 14).
   const [subHelp, setSubHelp] = useState<string | null>(null);
+  // Sparse confidence moment after completing a step (deterministic pick).
+  const [cheer, setCheer] = useState<string | null>(null);
+  // Completion echo — deterministic from total cook count, set once.
+  const [echoLine, setEchoLine] = useState<string | null>(null);
+  const reduceMotion = useReducedMotion();
 
   const recipe = recipeId ? getRecipe(recipeId) : undefined;
   const steps = recipe?.steps ?? [];
   const step: RecipeStep | undefined = steps[stepIndex];
+
+  // Arriving with a paused session for THIS recipe resumes at the saved step;
+  // anything else drops the stale pause. Done during render against the
+  // *initial* step index (0) — React's adjust-state-when-props-change
+  // pattern, no effect needed. `resumeKey` changes only on fresh mounts.
+  const [prevResume, setPrevResume] = useState<string | null>(null);
+  if (recipe && prevResume !== recipe.id) {
+    setPrevResume(recipe.id);
+    const paused = useRuchi.getState().pausedCooking;
+    if (paused && paused.recipeId === recipe.id) {
+      setStepIndex(Math.min(paused.stepIndex, steps.length - 1));
+    } else if (paused) {
+      useRuchi.getState().clearPausedCooking();
+    }
+  }
 
   // Per-step timer; resets when the step changes
   const countdown = useCountdown(step?.durationMin);
@@ -119,7 +167,7 @@ export default function CookingMode() {
 
   const openSubHelp = () => {
     if (!recipe) return;
-    track("recipe_help_requested", { recipeId: recipe.id, question: "I don't have this" });
+    track("substitution_opened", { recipeId: recipe.id, step: stepIndex + 1 });
     setSubHelp(ingredientSubHelp());
   };
 
@@ -156,6 +204,7 @@ export default function CookingMode() {
   const finishCook = () => {
     if (!recipe || celebrated) return;
     setCelebrated(true);
+    useRuchi.getState().clearPausedCooking(); // session genuinely completed
     const n = computeNutrition(recipe, 1);
     const cost = computeCost(recipe, 1);
     useRuchi.getState().logCookedMeal({
@@ -171,6 +220,13 @@ export default function CookingMode() {
       computeStreak(useRuchi.getState().history, Date.now()),
     );
     track("delivery_saved_metric", { recipeId: recipe.id });
+    track("meal_completed", {
+      recipeId: recipe.id,
+      protein: n.protein,
+      cost,
+      saved: Math.max(0, recipe.deliveryCompare.cost - cost),
+    });
+    setEchoLine(completionEcho(useRuchi.getState().history.length));
     setCompleted(true);
   };
 
@@ -185,6 +241,7 @@ export default function CookingMode() {
         cost={computeCost(recipe, 1)}
         deliveryCost={recipe.deliveryCompare.cost}
         streakDays={streakAtDone}
+        echo={echoLine}
         onHome={() => {
           go("home");
           setCompleted(false);
@@ -265,6 +322,19 @@ export default function CookingMode() {
             <p className="mb-5 text-[13px] font-medium text-cream/50">
               {minutesToDinner(minutesLeft)}
             </p>
+          )}
+
+          {/* Confidence moment after the previous step — sparse, earned */}
+          {cheer && (
+            <motion.p
+              key={cheer}
+              initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-5 text-[14.5px] font-semibold text-gold-soft"
+              aria-live="polite"
+            >
+              {cheer}
+            </motion.p>
           )}
 
           <AnimatePresence mode="wait">
@@ -389,7 +459,10 @@ export default function CookingMode() {
           <div className="flex gap-3">
             {stepIndex > 0 && (
               <button
-                onClick={() => setStepIndex((i) => Math.max(0, i - 1))}
+                onClick={() => {
+                setCheer(null);
+                setStepIndex((i) => Math.max(0, i - 1));
+              }}
                 className="rounded-2xl border border-cream/15 px-5 py-3 text-[15px] font-semibold text-cream/80 transition-colors hover:bg-cream/10 hover:text-cream"
               >
                 Back
@@ -398,8 +471,15 @@ export default function CookingMode() {
             <button
               onClick={() => {
                 track("cooking_step_completed", { recipeId: recipe.id, step: stepIndex + 1 });
-                if (isLast) finishCook();
-                else setStepIndex((i) => i + 1);
+                if (isLast) {
+                  finishCook();
+                } else {
+                  const next = stepIndex + 1;
+                  setStepIndex(next);
+                  // Confidence moments: midpoint milestone first, else the
+                  // every-3rd-step cheer. Cleared when moving backward.
+                  setCheer(milestoneLine(next, steps.length) ?? stepCheer(next));
+                }
               }}
               className="flex-1 rounded-2xl bg-flame px-5 py-3 text-[15px] font-bold text-white shadow-cta transition-all hover:bg-flame-deep active:scale-[0.99]"
             >
@@ -524,6 +604,11 @@ export default function CookingMode() {
                 ) : aiHelp ? (
                   <>
                     <p className="text-[15px] leading-relaxed">{aiHelp.answer}</p>
+                    {/* Mistake-handling footer: lowers the stakes at the exact
+                        "am I doing this right?" moment. */}
+                    <p className="mt-2.5 border-t border-cream/10 pt-2.5 text-[13px] text-cream/60">
+                      {reassuranceLine(stepIndex)}
+                    </p>
                     <p className="mt-2 text-[12px] text-cream/50">
                       {aiConfigured() ? "AI-assisted" : "RUCHI's kitchen notes"} · estimates, not gospel
                     </p>
@@ -551,6 +636,7 @@ function CompletionView({
   cost,
   deliveryCost,
   streakDays,
+  echo,
   onHome,
   onAgain,
 }: {
@@ -560,6 +646,7 @@ function CompletionView({
   cost: number;
   deliveryCost: number;
   streakDays: number;
+  echo: string | null;
   onHome: () => void;
   onAgain: () => void;
 }) {
@@ -616,6 +703,9 @@ function CompletionView({
 
         {streakLine && (
           <p className="mt-4 text-[14px] font-semibold text-gold-soft">{streakLine}</p>
+        )}
+        {echo && (
+          <p className="mt-4 text-[14.5px] font-medium text-cream/70">{echo}</p>
         )}
 
         <button

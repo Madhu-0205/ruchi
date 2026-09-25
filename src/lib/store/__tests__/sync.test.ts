@@ -54,6 +54,12 @@ vi.mock("@/lib/auth/supabase-data", () => ({
     h.state.streakDays.push(new Date(cookedAtMs).toISOString());
     return { ok: true as const, data: null };
   },
+  recordCookingCompletion: async () => ({ ok: true as const, data: "recorded" as const }),
+  fetchCookingStats: async () => ({ ok: true as const, data: null }),
+  fetchRecentCookedMeals: async () => ({ ok: true as const, data: [] }),
+  fetchNotificationPrefs: async () => ({ ok: true as const, data: null }),
+  pushAttentionState: async () => ({ ok: true as const, data: null }),
+  upsertNotificationChannels: async () => ({ ok: true as const, data: null }),
 }));
 
 import { useRuchi, computeStreak, dayKeyOf } from "../index";

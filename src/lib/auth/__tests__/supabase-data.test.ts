@@ -15,7 +15,10 @@ const h = vi.hoisted(() => {
       profiles: [] as Record<string, unknown>[],
       completed_meals: [] as Record<string, unknown>[],
       cooking_streaks: [] as Record<string, unknown>[],
+      cooking_completions: [] as Record<string, unknown>[],
+      cooking_stats: [] as Record<string, unknown>[],
       beta_feedback: [] as Record<string, unknown>[],
+      notification_prefs: [] as Record<string, unknown>[],
     },
     rpcCalls: [] as { fn: string; args: unknown }[],
     failNextRpc: false,
@@ -57,6 +60,19 @@ const h = vi.hoisted(() => {
         h.state.rows[table as keyof typeof h.state.rows].push(...rows);
         return { error: null };
       },
+      update: (patch: Record<string, unknown>) => ({
+        eq: async (_col: string, _v: string) => {
+          const rows = h.state.rows[table as keyof typeof h.state.rows] as Record<string, unknown>[];
+          let n = 0;
+          for (const r of rows) {
+            if (r.user_id === _v || r.id === _v) {
+              Object.assign(r, patch);
+              n++;
+            }
+          }
+          return { data: null, error: null, rowCount: n };
+        },
+      }),
     }),
     rpc: async (fn: string, args: unknown) => {
       h.state.rpcCalls.push({ fn, args });
@@ -80,12 +96,18 @@ vi.mock("@supabase/supabase-js", () => ({
 import { resetSupabaseForTests } from "../supabase";
 import {
   fetchCompletedMeals,
+  fetchCookingStats,
   fetchProfile,
+  fetchRecentCookedMeals,
   fetchStreak,
   insertBetaFeedback,
   insertCompletedMeals,
+  recordCookingCompletion,
   recordStreakDay,
   upsertProfile,
+  fetchNotificationPrefs,
+  pushAttentionState,
+  upsertNotificationChannels,
 } from "../supabase-data";
 
 const mealEntry = (over: Partial<Parameters<typeof insertCompletedMeals>[0][number]> = {}) => ({
@@ -117,6 +139,9 @@ beforeEach(() => {
   h.state.rows.profiles = [];
   h.state.rows.completed_meals = [];
   h.state.rows.cooking_streaks = [];
+  h.state.rows.cooking_completions = [];
+  h.state.rows.cooking_stats = [];
+  h.state.rows.notification_prefs = [];
   h.state.rpcCalls = [];
   h.state.failNextRpc = false;
 });
@@ -240,6 +265,126 @@ describe("streak RPC", () => {
     }  });
 });
 
+describe("real cooking stats — completion records", () => {
+  it("sends session token + engine values, NEVER a saving, streak, or foreign user id", async () => {
+    const r = await recordCookingCompletion({
+      sessionToken: "tok-1",
+      recipeId: "paneer-egg-bhurji",
+      recipeName: "Paneer Egg Bhurji",
+      cookedAtMs: new Date(2026, 8, 16, 21).getTime(),
+      servings: 2,
+      proteinG: 38,
+      calories: 520,
+      costInr: 82,
+      deliveryCompareInr: 303,
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data).toBe("recorded");
+    const call = h.state.rpcCalls.find((c) => c.fn === "record_cooking_completion");
+    expect(call).toBeDefined();
+    expect(call!.args).toEqual({
+      p_session_token: "tok-1",
+      p_recipe_id: "paneer-egg-bhurji",
+      p_recipe_name: "Paneer Egg Bhurji",
+      p_completed_at: new Date(2026, 8, 16, 21).toISOString(),
+      p_local_date: "2026-09-16",
+      p_servings: 2,
+      p_protein_g: 38,
+      p_calories: 520,
+      p_cost_inr: 82,
+      p_delivery_compare_inr: 303,
+    });
+    // No savings/streak/user-id arguments ever leave the client.
+    expect(Object.keys(call!.args as object)).not.toContain("p_savings_inr");
+    expect(Object.keys(call!.args as object)).not.toContain("p_user_id");
+    expect(Object.keys(call!.args as object)).not.toContain("p_current_streak");
+  });
+
+  it("maps a 'duplicate' RPC reply to the duplicate outcome", async () => {
+    const orig = h.client.rpc;
+    h.client.rpc = (async () => ({ data: "duplicate", error: null })) as unknown as typeof h.client.rpc;
+    const r = await recordCookingCompletion({
+      sessionToken: "tok-2",
+      recipeId: "egg-rice",
+      recipeName: "Egg Rice",
+      cookedAtMs: Date.now(),
+      servings: 1,
+      proteinG: 17,
+      calories: 549,
+      costInr: 17,
+      deliveryCompareInr: 190,
+    });
+    h.client.rpc = orig;
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data).toBe("duplicate");
+  });
+
+  it("fails honestly when unauthenticated", async () => {
+    h.state.user = null;
+    const r = await recordCookingCompletion({
+      sessionToken: "tok-3",
+      recipeId: "egg-rice",
+      recipeName: "Egg Rice",
+      cookedAtMs: Date.now(),
+      servings: 1,
+      proteinG: 17,
+      calories: 549,
+      costInr: 17,
+      deliveryCompareInr: 190,
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  it("fetchCookingStats maps the server-derived view row", async () => {
+    h.state.rows.cooking_stats = [
+      {
+        meals_cooked: 5,
+        total_saved: 862,
+        last_completed_at: new Date(2026, 8, 16, 21).toISOString(),
+        current_streak: 2,
+        longest_streak: 3,
+      },
+    ];
+    const r = await fetchCookingStats();
+    expect(r.ok).toBe(true);
+    if (r.ok && r.data) {
+      expect(r.data.mealsCooked).toBe(5);
+      expect(r.data.totalSaved).toBe(862);
+      expect(r.data.currentStreak).toBe(2);
+      expect(r.data.longestStreak).toBe(3);
+    }
+  });
+
+  it("fetchCookingStats returns null data when the user has no records", async () => {
+    const r = await fetchCookingStats();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data).toBeNull();
+  });
+
+  it("fetchRecentCookedMeals maps completion rows to store shape", async () => {
+    h.state.rows.cooking_completions = [
+      {
+        id: "c-1",
+        recipe_id: "egg-fried-rice",
+        recipe_name: "Egg Fried Rice",
+        completed_at: new Date(2026, 8, 15, 20).toISOString(),
+        servings: 1,
+        protein_g: 29,
+        calories: 480,
+        cost_inr: 61,
+        savings_inr: 139,
+      },
+    ];
+    const r = await fetchRecentCookedMeals();
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data).toHaveLength(1);
+      expect(r.data[0]!.recipeId).toBe("egg-fried-rice");
+      expect(r.data[0]!.deliveryCompareCost).toBe(200); // 61 + 139
+    }
+  });
+});
+
 describe("beta feedback", () => {
   it("inserts with the SIGNED-IN user's id only — client cannot choose ownership", async () => {
     h.state.rows.beta_feedback = [];
@@ -269,5 +414,70 @@ describe("beta feedback", () => {
     h.client.from = orig;
     expect(r).toEqual({ ok: false, reason: "error" });
     expect(h.state.rows.beta_feedback).toHaveLength(0);
+  });
+});
+
+// ── Notification prefs (migration 0004) ──────────────────────
+
+describe("notification prefs", () => {
+  it("fetchNotificationPrefs returns null when the user never opted in", async () => {
+    const r = await fetchNotificationPrefs();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.data).toBeNull(); // defaults OFF — the app must treat this as all-channels-off
+  });
+
+  it("upsertNotificationChannels stores only known channels as booleans", async () => {
+    const r = await upsertNotificationChannels({ web_push: true, sms: true } as never);
+    expect(r.ok).toBe(true);
+    const row = h.state.rows.notification_prefs[0]!;
+    expect(row.user_id).toBe("user-1"); // own id only
+    expect(row.channels).toEqual({ web_push: true }); // "sms" stripped client-side
+  });
+
+  it("fetchNotificationPrefs maps channels/quiet/cap and drops unknown flags", async () => {
+    h.state.rows.notification_prefs = [
+      {
+        user_id: "user-1",
+        channels: { web_push: true, email: false, sms: true },
+        quiet_hours: { start: 21, end: 9 },
+        max_per_week: 3,
+        updated_at: new Date(2026, 8, 25, 10).toISOString(),
+      },
+    ];
+    const r = await fetchNotificationPrefs();
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data!.channels).toEqual({ web_push: true }); // unknown keys dropped
+      expect(r.data!.quietHours).toEqual({ start: 21, end: 9 });
+      expect(r.data!.maxPerWeek).toBe(3);
+    }
+  });
+
+  it("pushAttentionState updates the mirror but never creates a row (opt-in stays explicit)", async () => {
+    const mirror = { lastShown: { type: "unused_ingredients", recipeId: "egg-rice", at: 1790000000000 } };
+    const rNoRow = await pushAttentionState(mirror);
+    expect(rNoRow.ok).toBe(true);
+    expect(h.state.rows.notification_prefs).toHaveLength(0); // no side-effect opt-in
+
+    h.state.rows.notification_prefs = [
+      { user_id: "user-1", channels: { web_push: true }, attention_state: {} },
+    ];
+    await pushAttentionState(mirror);
+    expect(h.state.rows.notification_prefs[0]!.attention_state).toEqual(mirror);
+  });
+
+  it("pushAttentionState propagates failure as { ok: false }", async () => {
+    h.state.rows.notification_prefs = [
+      { user_id: "user-1", channels: {}, attention_state: {} },
+    ];
+    const orig = h.client.from;
+    h.client.from = (() => ({
+      update: () => ({
+        eq: async () => ({ data: null, error: { message: "rls" }, rowCount: 0 }),
+      }),
+    })) as unknown as typeof h.client.from;
+    const r = await pushAttentionState({ lastShown: null });
+    h.client.from = orig;
+    expect(r).toEqual({ ok: false, reason: "error" });
   });
 });

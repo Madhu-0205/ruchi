@@ -3,6 +3,7 @@
 import { ArrowUpRight, Clock } from "lucide-react";
 import { Card } from "@/components/ui";
 import { FoodVisual } from "@/components/FoodVisual";
+import { canMakeFor } from "@/lib/personality";
 import type { Recipe } from "@/lib/types";
 
 // ─────────────────────────────────────────────────────────────
@@ -39,6 +40,7 @@ export function RecipeCard({
   notNeeded = [],
   size = "md",
   layout = "auto",
+  deliveryCompareCost,
 }: {
   recipe: Recipe;
   protein: number;
@@ -63,6 +65,9 @@ export function RecipeCard({
   /** Optional ingredient names the user has that this dish doesn't need. */
   notNeeded?: string[];
   size?: "md" | "lg";
+  /** Delivered-meal comparison cost — only when the catalog has a defensible
+   * basis (recipe.deliveryCompare). Adds "You can make this for ~₹X". */
+  deliveryCompareCost?: number;
   /** "vertical" forces the stacked layout even on wide viewports —
    * needed inside narrow rail/grid containers where the viewport-keyed
    * row layout would cramp the text column. */
@@ -131,6 +136,11 @@ export function RecipeCard({
           </div>
 
           {reason && <p className="mt-1 line-clamp-1 text-[13px] text-muted">{reason}</p>}
+
+          {/* Cost as value — shown only when a defensible comparison exists. */}
+          {deliveryCompareCost !== undefined && deliveryCompareCost > costPerServing && (
+            <p className="mt-1 text-[13px] font-medium text-gold">{canMakeFor(costPerServing)}</p>
+          )}
 
           {/* Decision stats — the three numbers that close the deal */}
           <div className="mt-3.5 grid grid-cols-3 divide-x divide-line rounded-2xl bg-cream/70 py-2.5">

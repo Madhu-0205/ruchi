@@ -187,16 +187,32 @@ export type NudgeKind =
 // ── Analytics ───────────────────────────────────────────────
 export type AnalyticsEventName =
   | "ingredient_added"
+  | "ingredients_added"
+  | "ingredient_scan_started"
+  | "ingredient_scan_completed"
+  | "find_my_meal_clicked"
+  | "recommendations_loaded"
+  | "ruchi_choose_clicked"
   | "meal_recommendation_viewed"
   | "meal_selected"
   | "cooking_started"
   | "cooking_step_completed"
   | "cooking_completed"
+  | "meal_completed"
   | "meal_saved"
   | "ingredient_substituted"
+  | "substitution_opened"
   | "recipe_help_requested"
   | "meal_shared"
   | "notification_opened"
+  | "re_attention_generated"
+  | "re_attention_shown"
+  | "re_attention_clicked"
+  | "re_attention_dismissed"
+  | "re_attention_suppressed"
+  | "re_attention_recipe_selected"
+  | "re_attention_cooking_started"
+  | "re_attention_cooking_completed"
   | "delivery_saved_metric"; // intended-delivery → cooked conversion metric
 
 export interface AnalyticsEvent {

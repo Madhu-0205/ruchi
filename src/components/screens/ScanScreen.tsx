@@ -109,7 +109,7 @@ export default function ScanScreen() {
       setPreviewUrl(dataUrl);
       setPhase("analyzing");
       setError(null);
-      track("meal_recommendation_viewed", { via: `scan-${source}` });
+      track("ingredient_scan_started", { source });
 
       // Generation gate: aborting the previous fetch stops its NETWORK work,
       // but a chain that already resumed past an await would still run its
@@ -242,7 +242,8 @@ export default function ScanScreen() {
     const ids = items.filter((x) => !x.uncertain).map((x) => x.id).filter((x): x is string => Boolean(x));
     if (ids.length === 0) return;
     for (const id of ids) addItem(id);
-    track("meal_selected", { via: "scan-confirm", ingredients: ids.length });
+    track("ingredient_scan_completed", { count: ids.length });
+    track("ingredients_added", { count: ids.length, via: "scan" });
     go("home");
   };
 

@@ -8,15 +8,35 @@ import { RuchiLogo } from "@/components/RuchiLogo";
 import { FoodVisual } from "@/components/FoodVisual";
 import { RecipeCard } from "@/components/RecipeCard";
 import { StaggerGroup, StaggerItem } from "@/components/motion";
-import { useRuchi, weeklyProgress } from "@/lib/store";
+import { useRuchi } from "@/lib/store";
 import { useScreen } from "@/lib/store/screens";
 import { INGREDIENTS, searchIngredients } from "@/lib/data/ingredients";
 import { RECIPES } from "@/lib/data/recipes";
 import { recommend, matchRecipes, nearRecipes, chooseForMe } from "@/lib/engine/match";
 import { getRecommendationService, aiConfigured } from "@/lib/ai";
-import { kitchenGoodLine, intentWhisper } from "@/lib/personality";
+import {
+  homeHeadline,
+  homeSubLine,
+  returnVisitLine,
+  keptInPocket,
+  FEATURED_CTA_HINT,
+  RECENTLY_COOKED_HEADING,
+  COOK_AGAIN_LABEL,
+  kitchenGoodLine,
+  intentWhisper,
+  proteinPatternLine,
+  LET_RUCHI_CHOOSE_LABEL,
+  LET_RUCHI_CHOOSE_SUB,
+} from "@/lib/personality";
+import { track } from "@/lib/engine/analytics";
+import {
+  evaluateAttention,
+  isSuppressed,
+  type AttentionContext,
+  type AttentionRecipeFacts,
+} from "@/lib/context/attention";
 import { computeCostPerServing, computeNutrition } from "@/lib/engine/nutrition";
-import type { Intent, People } from "@/lib/types";
+import type { Intent, People, Recipe } from "@/lib/types";
 
 const INTENTS: { id: Intent; label: string }[] = [
   { id: "high-protein", label: "💪 High Protein" },
@@ -34,6 +54,9 @@ const PEOPLE: People[] = [1, 2, 3, 4];
 const SUGGESTED = [
   "egg", "paneer", "tomato", "onion", "rice", "bread", "potato", "curd", "capsicum", "toor-dal",
 ];
+
+/** Captured once per module load — stable across renders (no clock churn). */
+const NOW_MS = Date.now();
 
 // Horizontal rail on mobile → 4-col editorial grid on desktop.
 // Module-level so the component identity is stable across renders
@@ -56,6 +79,8 @@ export default function HomeScreen() {
   const removeItem = useRuchi((s) => s.removeItem);
   const prefs = useRuchi((s) => s.prefs);
   const history = useRuchi((s) => s.history);
+  const recentCooked = useRuchi((s) => s.recentCooked);
+  const cloudStats = useRuchi((s) => s.cloudStats);
   const go = useScreen((s) => s.go);
 
   // Derived (stable) — never map inside the selector, it breaks snapshots.
@@ -139,7 +164,6 @@ export default function HomeScreen() {
     };
   }, [filters, recs, prefs.skill]);
   const shown = aiRecs ?? recs;
-  const week = useMemo(() => weeklyProgress({ history }), [history]);
 
   const has = (id: string) => inventoryIds.includes(id);
   const toggle = (id: string) => (has(id) ? removeItem(id) : addItem(id));
@@ -147,10 +171,13 @@ export default function HomeScreen() {
   const hasInventory = inventoryIds.length > 0;
   const isEmptyKitchen = inventoryIds.length === 0;
 
-  // Phase 5: Find My Meal is the one primary action. It reveals the results
-  // section and scrolls to it; the deterministic list itself was already
-  // computed (instant), so the press never waits on anything.
+  // Find My Meal is the one primary action. It reveals the results section
+  // and scrolls to it; the deterministic list itself was already computed
+  // (instant), so the press never waits on anything. Funnel events fire
+  // here — click + loaded pair marks the top of the core funnel.
   const findMyMeal = () => {
+    track("find_my_meal_clicked", { kitchen: inventoryIds.length, intents: intents.join(",") });
+    track("recommendations_loaded", { count: recs.length });
     setFindMyMealUsed(true);
     requestAnimationFrame(() => {
       document
@@ -159,12 +186,30 @@ export default function HomeScreen() {
     });
   };
 
-  // Phase 6: "Not sure? Let RUCHI choose" — the engine's single best pick,
-  // straight into cooking mode. No comparing, no second-guessing.
+  // "Let RUCHI Choose" — the engine's single best pick, straight into
+  // cooking mode. No comparing, no second-guessing. Strict eligibility
+  // holds: chooseForMe returns null rather than a near-miss.
   const ruchiChooses = () => {
     const best = chooseForMe(filters);
+    track("ruchi_choose_clicked", { found: !!best });
     if (best) go("cooking", { recipeId: best.recipe.id });
   };
+
+  // Behavior-based personalization (evidence-gated): acknowledges a real
+  // protein pattern once 2+ cooked meals support it. Null → silent.
+  const proteinNudge = useMemo(
+    () => proteinPatternLine(history.map((h) => ({
+      recipeId: h.recipeId,
+      recipeName: h.recipeName,
+      proteinG: h.proteinG,
+      cost: h.cost,
+      deliveryCompareCost: h.deliveryCompareCost,
+    }))),
+    [history],
+  );
+
+  // ── Featured meal: the user's real top pick, or null when nothing is eligible ──
+  const featured = shown[0] ?? null;
 
   // ── Editorial sections from the real catalog (deterministic, no AI) ──
   // Rail sections exclude drinks: the food rails read best as plated meals,
@@ -182,9 +227,111 @@ export default function HomeScreen() {
     };
   }, []);
 
+  // ── Voice: deterministic, context-aware ─────────────────────
+  const attention = useRuchi((s) => s.attention);
+  const pausedCooking = useRuchi((s) => s.pausedCooking);
+  const markAttentionShown = useRuchi((s) => s.markAttentionShown);
+  const dismissAttention = useRuchi((s) => s.dismissAttention);
+
+  // Featured-meal facts for the context engine (existing utilities, no extra
+  // engine runs — `shown[0]` was already computed above).
+  const featuredFacts: AttentionRecipeFacts | null = useMemo(() => {
+    if (!featured) return null;
+    return {
+      timeMin: featured.recipe.timeMin,
+      proteinPerServing: computeNutrition(featured.recipe, 1).protein,
+      costPerServing: computeCostPerServing(featured.recipe, 1),
+    };
+  }, [featured]);
+
+  // ONE re-attention opportunity per visit — computed in render (pure),
+  // shown only after mount so the "shown" event fires exactly once per
+  // real visit (never during SSR/hydration).
+  const rawContext = useMemo(
+    () =>
+      evaluateAttention(
+        {
+          now: NOW_MS,
+          inventoryIds,
+          diet: prefs.diet,
+          history,
+          pausedSession: pausedCooking,
+          lastShown: attention.lastShown,
+        },
+        featured,
+        featuredFacts,
+      ),
+    // NOW_MS is module scope (stable) — intentionally not a dependency.
+    [inventoryIds, prefs.diet, history, pausedCooking, attention.lastShown, featured, featuredFacts],
+  );
+
+  // Suppression is decided against the state AS OF page load — the
+  // "shown" effect below updates the store, and the live state must never
+  // mute a context on the same visit it was shown (show-then-vanish bug).
+  const [attentionAtLoad] = useState(attention);
+
+  // Suppression check (pure). "Shown" tracking fires in the effect below,
+  // once per context per real visit — never during render or SSR.
+  const context: AttentionContext = useMemo((): AttentionContext => {
+    if (rawContext.type === "none") return rawContext;
+    if (isSuppressed(rawContext, attentionAtLoad, NOW_MS)) {
+      return { ...rawContext, type: "none" };
+    }
+    return rawContext;
+    // attentionAtLoad is a mount-time snapshot by design (see above).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawContext]);
+
+  // Register the impression exactly once per context change.
+  useEffect(() => {
+    if (context.type === "none") return;
+    track("re_attention_shown", {
+      context_type: context.type,
+      surface: "home",
+      recipe_id: context.recipeId ?? "",
+    });
+    markAttentionShown(context.type, context.recipeId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [context.type, context.recipeId]);
+
+  // The context drives the hero when it has a real headline; the premium
+  // defaults (homeHeadline) carry first-visit/empty states.
+  const headline =
+    context.type === "none" || !context.headline
+      ? homeHeadline(inventoryIds.length, history.length)
+      : context.headline.replace(/\./g, ".\n").replace(/\n\n/g, "\n");
+  const supportLine = context.type !== "none" && context.supportingText
+    ? context.supportingText
+    : returnVisitLine(inventoryIds.length, history.length) ?? homeSubLine(inventoryIds.length);
+  const hasRealStats = !!cloudStats && cloudStats.mealsCooked > 0;
+
+  // Context CTA — one tap from observation to cooking.
+  const contextAction = () => {
+    track("re_attention_clicked", {
+      context_type: context.type,
+      surface: "home",
+      recipe_id: context.recipeId ?? "",
+    });
+    if (context.recipeId) {
+      track("re_attention_recipe_selected", { context_type: context.type, recipe_id: context.recipeId });
+    }
+    if (context.action === "resume" && context.recipeId) {
+      go("cooking", { recipeId: context.recipeId });
+    } else if (context.action === "cook_again" && context.recipeId) {
+      go("cooking", { recipeId: context.recipeId });
+    } else if (context.action === "cook" && context.recipeId) {
+      go("cooking", { recipeId: context.recipeId });
+    } else {
+      setFindMyMealUsed(true);
+      requestAnimationFrame(() => {
+        document.getElementById("ruchi-results")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+  };
+
   return (
     <div className="pt-8 lg:pt-14">
-      {/* ── Hero ─────────────────────────────────────────── */}
+      {/* ── Hero: statement + featured meal ───────────────────── */}
       <section className="lg:grid lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:gap-16">
         <header>
           <div className="flex items-center gap-2.5 lg:hidden">
@@ -194,96 +341,178 @@ export default function HomeScreen() {
             </p>
           </div>
           <h1 className="mt-4 font-display text-display-hero font-semibold lg:mt-0">
-            <span className="block">Turn what you have</span>{" "}
-            <span className="block">
-              into{" "}
-              <span className="relative inline-block text-flame">
-                something
-                {/* hand-drawn warmth: underline stroke */}
-                <svg
-                  aria-hidden
-                  viewBox="0 0 110 10"
-                  preserveAspectRatio="none"
-                  className="absolute -bottom-1.5 left-0 h-2 w-full text-flame/45"
-                >
-                  <path
-                    d="M2 7 Q 28 2, 55 6 T 108 5"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="3.5"
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </span>{" "}
-              <span className="accent-italic whitespace-nowrap">worth eating.</span>
-            </span>
+            {headline.split("\n").map((line, i) => (
+              <span key={i} className="block">
+                {i === 0 ? (
+                  line
+                ) : (
+                  <span className="accent-italic text-flame">{line}</span>
+                )}
+              </span>
+            ))}
           </h1>
           <p className="mt-5 max-w-md text-[16px] leading-relaxed text-muted lg:text-[17px]">
-            Show RUCHI your ingredients and get meals that actually fit your time, preferences
-            and budget.
+            {supportLine}
           </p>
-          <p className="mt-3 max-w-md text-[15px] font-medium text-ink-soft">
-            ₹280 delivery or a ₹82 dinner? 👀
-          </p>
-
-          <div className="mt-7 flex flex-col gap-3 sm:flex-row lg:mt-9">
-            <button
-              onClick={() => go("scan")}
-              className="relative inline-flex items-center justify-center gap-2.5 overflow-hidden rounded-2xl bg-flame px-8 py-4 text-[16px] font-bold text-white shadow-cta transition-all duration-200 hover:bg-flame-deep active:scale-[0.98]"
-            >
-              <ShimmerSweep />
-              <Camera size={18} strokeWidth={2.2} />
-              <span className="relative">Scan ingredients</span>
-            </button>
-            <button
-              onClick={() => go("discover")}
-              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-line-strong bg-surface px-8 py-4 text-[16px] font-semibold text-ink shadow-soft transition-all duration-200 hover:border-ink/25 hover:shadow-lifted active:scale-[0.98]"
-            >
-              Explore recipes
-            </button>
-          </div>
+          {/* The context's one action — quiet, next to its own evidence line. */}
+          {context.type !== "none" && (
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <button
+                onClick={contextAction}
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-ink px-6 py-3 text-[15px] font-semibold text-cream shadow-soft transition-all duration-200 hover:bg-ink-soft active:scale-[0.98]"
+              >
+                {context.action === "resume" ? "Resume cooking →" : null}
+                {context.action === "cook_again" ? "Cook again →" : null}
+                {context.action === "cook" ? "Cook this →" : null}
+                {context.action === "find_meal" ? "See what you can make →" : null}
+              </button>
+              <button
+                onClick={() => {
+                  track("re_attention_dismissed", { context_type: context.type, surface: "home" });
+                  dismissAttention();
+                }}
+                className="inline-flex min-h-[44px] items-center px-3 text-[14px] font-medium text-muted transition-colors hover:text-ink"
+              >
+                Not now
+              </button>
+            </div>
+          )}
+          {hasRealStats && (
+            <p className="mt-3 text-[15px] font-medium text-ink-soft">
+              {keptInPocket(cloudStats.totalSaved)}
+              {cloudStats.mealsCooked > 1 ? ` ${cloudStats.mealsCooked} meals down.` : ""}
+            </p>
+          )}
 
           {/* Social proof of simplicity — honest, no fabricated numbers */}
-          <p className="mt-6 flex items-center gap-2 text-[13px] text-muted">
+          <p className="mt-6 hidden items-center gap-2 text-[13px] text-muted sm:flex">
             <Sparkles size={14} className="text-flame" />
             No account needed. No clutter. Just dinner.
           </p>
         </header>
 
-        {/* Hero visual: ingredients → meal, the product promise in one view */}
-        <HeroVisual onScan={() => go("scan")} className="mt-12 lg:mt-0" />
+        {/* Featured meal — the decision, already made for them */}
+        {featured ? (
+          <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+            className="mt-12 lg:mt-0"
+          >
+            <FeaturedMeal
+              recipe={featured.recipe}
+              protein={computeNutrition(featured.recipe, people).protein}
+              costPerServing={computeCostPerServing(featured.recipe, people)}
+              matchedLine={
+                featured.coreMatched != null
+                  ? `You already have ${featured.coreMatched}/${featured.coreTotal} ingredients.`
+                  : featured.reason ?? null
+              }
+              onCook={() => {
+                track("meal_selected", { recipeId: featured.recipe.id, via: "featured-cook" });
+                if (context.recipeId === featured.recipe.id) {
+                  track("re_attention_cooking_started", {
+                    context_type: context.type,
+                    recipe_id: featured.recipe.id,
+                  });
+                }
+                go("cooking", { recipeId: featured.recipe.id });
+              }}
+              onDetails={() => {
+                track("meal_selected", { recipeId: featured.recipe.id, via: "featured-details" });
+                go("meal", { recipeId: featured.recipe.id });
+              }}
+            />
+          </motion.div>
+        ) : (
+          <HeroVisual onScan={() => go("scan")} className="mt-12 lg:mt-0" />
+        )}
       </section>
 
-      {/* ── Weekly progress (only once they've cooked) ───── */}
-      {week.meals > 0 && (
-        <div className="mt-14 border-y border-line py-6">
+      {/* ── Real cooking stats — the re-attention strip (server data only) ── */}
+      {hasRealStats && (
+        <div className="mt-12 border-y border-line py-6">
           <div className="flex items-center justify-around gap-6 text-center sm:justify-start sm:gap-14 sm:text-left">
             <div>
               <p className="font-display text-[30px] font-semibold leading-none">
-                {week.meals}
+                {cloudStats.mealsCooked}
               </p>
               <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-                cooked this week
+                meals cooked
+              </p>
+            </div>
+            <div>
+              <p className="font-display text-[30px] font-semibold leading-none text-flame-deep">
+                🔥 {cloudStats.currentStreak} day{cloudStats.currentStreak === 1 ? "" : "s"}
+              </p>
+              <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+                cooking streak
               </p>
             </div>
             <div>
               <p className="font-display text-[30px] font-semibold leading-none text-gold">
-                ₹{week.saved}
+                ₹{cloudStats.totalSaved.toLocaleString("en-IN")}
               </p>
               <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-                saved (est.)
-              </p>
-            </div>
-            <div>
-              <p className="font-display text-[30px] font-semibold leading-none text-sage">
-                {week.protein}g
-              </p>
-              <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-                protein
+                estimated saved
               </p>
             </div>
           </div>
+          <p className="mt-4 text-[11.5px] text-muted">
+            Counted from meals you actually finished, synced from your account.
+          </p>
         </div>
+      )}
+
+      {/* ── Recently cooked — real completions only, one tap to repeat ── */}
+      {recentCooked.length > 0 && (
+        <section className="mt-14" aria-label={RECENTLY_COOKED_HEADING}>
+          <SectionHeading
+            eyebrow="From your kitchen"
+            title={RECENTLY_COOKED_HEADING}
+            right={
+              <button
+                onClick={() => go("profile")}
+                className="text-[13px] font-semibold text-flame transition-colors hover:text-flame-deep"
+              >
+                All cooks →
+              </button>
+            }
+          />
+          <Rail>
+            {recentCooked.slice(0, 8).map((h) => {
+              const r = RECIPES.find((x) => x.id === h.recipeId);
+              return (
+                <RailItem key={h.id}>
+                  <div className="flex items-center gap-3 rounded-3xl border border-line bg-surface p-3.5 shadow-soft">
+                    {r ? (
+                      <FoodVisual recipe={r} emojiClassName="text-3xl" className="h-14 w-14 shrink-0 rounded-2xl" />
+                    ) : (
+                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-cream-deep text-2xl">🍽️</div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[14.5px] font-semibold">{r?.name ?? h.recipeName}</p>
+                      <p className="mt-0.5 text-[12px] text-muted">
+                        {r ? `${r.timeMin} min` : ""}{r && h.cost ? " · " : ""}₹{h.cost}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        track("meal_selected", { recipeId: h.recipeId, via: "cook-again" });
+                        go("cooking", { recipeId: h.recipeId });
+                      }}
+                      disabled={!r}
+                      className="shrink-0 rounded-full bg-flame-soft px-3.5 py-2 text-[12.5px] font-bold text-flame-deep transition-colors hover:bg-flame hover:text-white disabled:pointer-events-none disabled:opacity-40"
+                      aria-label={`Cook ${r?.name ?? h.recipeName} again`}
+                    >
+                      {COOK_AGAIN_LABEL}
+                    </button>
+                  </div>
+                </RailItem>
+              );
+            })}
+          </Rail>
+        </section>
       )}
 
       {/* ── What's in your kitchen? ──────────────────────── */}
@@ -471,20 +700,30 @@ export default function HomeScreen() {
                 <span className="relative">Find My Meal ✨</span>
               </button>
               <p className="mt-3 text-center text-[13.5px] font-medium text-muted">
-                {intentWhisper(intents)}
+                {proteinNudge ?? intentWhisper(intents)}
               </p>
             </div>
+
+            {/* Fast lane for the hungry: one tap, decided, cooking. */}
+            <button
+              onClick={ruchiChooses}
+              disabled={!hasInventory}
+              className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-2xl border border-line-strong bg-surface px-6 py-3 text-[15px] font-semibold text-ink shadow-soft transition-all duration-200 hover:border-ink/25 hover:shadow-lifted active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
+            >
+              <Shuffle size={16} className="text-flame" aria-hidden />
+              {LET_RUCHI_CHOOSE_LABEL}
+            </button>
+            <p className="mt-1.5 text-center text-[12.5px] text-muted">{LET_RUCHI_CHOOSE_SUB}</p>
           </motion.div>
         )}
       </section>
 
-      {/* ── Recommendations — revealed by Find My Meal ───── */}
+      {/* ── Recommendations — revealed by Find My Meal (the featured pick leads) ── */}
       {hasInventory && findMyMealUsed && (
         <section className="mt-14 scroll-mt-24" id="ruchi-results" aria-live="polite">
           <SectionHeading
             eyebrow="From your kitchen"
-            title={`I found ${shown.length} meal${shown.length === 1 ? "" : "s"} for you.`
-            }
+            title={`I found ${shown.length} meal${shown.length === 1 ? "" : "s"} for you.`}
           />
 
           {shown.length === 0 ? (
@@ -514,8 +753,15 @@ export default function HomeScreen() {
                       tags={r.tags}
                       why={rec.why}
                       notNeeded={rec.notNeeded}
-                      onClick={() => go("meal", { recipeId: r.id })}
-                      onCook={() => go("cooking", { recipeId: r.id })}
+                      deliveryCompareCost={r.deliveryCompare.cost}
+                      onClick={() => {
+                        track("meal_selected", { recipeId: r.id, via: "home" });
+                        go("meal", { recipeId: r.id });
+                      }}
+                      onCook={() => {
+                        track("meal_selected", { recipeId: r.id, via: "cook-direct" });
+                        go("cooking", { recipeId: r.id });
+                      }}
                     />
                   </StaggerItem>
                 );
@@ -608,12 +854,12 @@ export default function HomeScreen() {
         </section>
       )}
 
-      {/* ── Empty-kitchen welcome ────────────────────────── */}
+      {/* ── Empty-kitchen welcome (inviting, not broken) ────────── */}
       {isEmptyKitchen && (
         <section className="mt-16">
           <Card className="warm-glow overflow-hidden p-7 sm:p-9">
             <p className="font-display text-display-md font-semibold leading-snug">
-              The deal, simply.
+              Nothing in the kitchen yet. Good — let&apos;s fix that.
             </p>
             <ul className="mt-4 space-y-2.5 text-[15px] leading-relaxed text-ink-soft">
               <li className="flex gap-2.5">
@@ -629,8 +875,18 @@ export default function HomeScreen() {
                 Exact quantities, beginner steps, protein and cost — no guessing.
               </li>
             </ul>
-            <div className="mt-6 flex items-center gap-2 text-[13px] font-semibold text-flame-deep">
-              <Sparkles size={15} /> No account. No clutter. Just dinner.
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <button
+                onClick={() => go("scan")}
+                className="relative inline-flex items-center justify-center gap-2.5 overflow-hidden rounded-2xl bg-flame px-8 py-4 text-[16px] font-bold text-white shadow-cta transition-all duration-200 hover:bg-flame-deep active:scale-[0.98]"
+              >
+                <ShimmerSweep />
+                <Camera size={18} strokeWidth={2.2} />
+                <span className="relative">Scan ingredients</span>
+              </button>
+              <span className="hidden items-center text-[13px] text-muted sm:flex">
+                or tap an ingredient below
+              </span>
             </div>
           </Card>
         </section>
@@ -656,7 +912,7 @@ export default function HomeScreen() {
               key={r.id}
               recipe={r}
               protein={computeNutrition(r, 1).protein}
-                calories={computeNutrition(r, 1).calories}
+              calories={computeNutrition(r, 1).calories}
               costPerServing={computeCostPerServing(r, 1)}
               missingCount={0}
               canCookNow={false}
@@ -773,7 +1029,71 @@ export default function HomeScreen() {
   );
 }
 
-// ── Hero visual ─────────────────────────────────────────────
+// ── FeaturedMeal — the decision, already made ───────────────
+// The user's real top engine pick, presented as the product's answer:
+// dominant visual, minimal stats, ONE primary CTA + quiet details link.
+
+function FeaturedMeal({
+  recipe,
+  protein,
+  costPerServing,
+  matchedLine,
+  onCook,
+  onDetails,
+}: {
+  recipe: Recipe;
+  protein: number;
+  costPerServing: number;
+  matchedLine: string | null;
+  onCook: () => void;
+  onDetails: () => void;
+}) {
+  return (
+    <div aria-label={`Featured meal: ${recipe.name}`}>
+      <div className="relative rounded-[2rem] border border-line bg-surface p-5 shadow-lifted sm:p-7">
+        <FoodVisual
+          recipe={recipe}
+          zoom
+          emojiClassName="text-7xl sm:text-8xl"
+          className="aspect-[16/10] w-full rounded-2xl"
+        />
+        <div className="mt-5 flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="font-display text-[24px] font-semibold leading-snug">{recipe.name}</p>
+            <p className="mt-1.5 text-[13.5px] font-medium text-muted">
+              {recipe.timeMin} min
+              <span aria-hidden className="mx-1.5 text-line-strong">·</span>
+              {protein}g protein
+              <span aria-hidden className="mx-1.5 text-line-strong">·</span>
+              ~₹{costPerServing}
+            </p>
+            {matchedLine && (
+              <p className="mt-1 text-[13.5px] font-medium text-sage">{matchedLine}</p>
+            )}
+          </div>
+        </div>
+        <div className="mt-5 flex flex-col gap-2.5 sm:flex-row sm:items-center">
+          <button
+            onClick={onCook}
+            className="relative inline-flex flex-1 items-center justify-center gap-2.5 overflow-hidden rounded-2xl bg-flame px-8 py-4 text-[16px] font-bold text-white shadow-cta transition-all duration-200 hover:bg-flame-deep active:scale-[0.98]"
+          >
+            <ShimmerSweep />
+            <span className="relative">Cook this →</span>
+          </button>
+          <button
+            onClick={onDetails}
+            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-line-strong bg-surface px-6 py-4 text-[15px] font-semibold text-ink transition-all duration-200 hover:border-ink/25 active:scale-[0.98]"
+          >
+            View details
+          </button>
+        </div>
+        <p className="mt-3 text-center text-[12.5px] text-muted">{FEATURED_CTA_HINT}</p>
+      </div>
+    </div>
+  );
+}
+
+// ── Hero visual (empty kitchen) ─────────────────────────────
 // The product demo as composition: ingredient chips cascade into a
 // floating meal card with real engine numbers. Purely presentational.
 
@@ -854,7 +1174,7 @@ function HeroVisual({ onScan, className = "" }: { onScan: () => void; className?
         </motion.button>
       </div>
 
-      {/* Floating accent chip — the AI whisper */}
+      {/* Floating accent chip — the product promise */}
       <motion.div
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1, y: [0, -6, 0] }}

@@ -51,6 +51,41 @@ export default function MealDetailScreen() {
       .map((ri) => ri.ingredientId);
   }, [recipe, inventoryIds]);
 
+  // YOU HAVE / YOU NEED / PANTRY breakdown. Cores first, owned optionals
+  // alongside; pantry staples stay a footnote, never a checklist.
+  const haveList = useMemo(() => {
+    if (!recipe) return [];
+    return recipe.ingredients
+      .filter(
+        (ri) =>
+          !isAssumedPantry(ri.ingredientId) && inventoryIds.includes(ri.ingredientId),
+      )
+      .map((ri) => ({
+        ri,
+        ing: findIngredient(ri.ingredientId),
+        qty: formatQuantity(ri, servings, findIngredient(ri.ingredientId)),
+      }));
+  }, [recipe, inventoryIds, servings]);
+
+  const optionalNotOwned = useMemo(() => {
+    if (!recipe) return [];
+    return recipe.ingredients
+      .filter(
+        (ri) =>
+          ri.optional &&
+          !isAssumedPantry(ri.ingredientId) &&
+          !inventoryIds.includes(ri.ingredientId),
+      )
+      .map((ri) => ({ ri, ing: findIngredient(ri.ingredientId) }));
+  }, [recipe, inventoryIds]);
+
+  const pantryUsed = useMemo(() => {
+    if (!recipe) return [];
+    return recipe.ingredients
+      .filter((ri) => isAssumedPantry(ri.ingredientId))
+      .map((ri) => findIngredient(ri.ingredientId)?.name ?? ri.ingredientId);
+  }, [recipe]);
+
   if (!recipe || !nutrition) return null;
 
   const proteinLine =
@@ -172,7 +207,10 @@ export default function MealDetailScreen() {
         </p>
       </div>
 
-      {/* ── Ingredients ──────────────────────────────────── */}
+      {/* ── Ingredients — YOU HAVE / YOU NEED / PANTRY ────────── */}
+      {/* The signature cookability pattern: three quiet groups instead of
+          one long list. The user sees ownership at a glance — what they
+          have, what's genuinely missing, what RUCHI assumes. */}
       <div className="mt-9">
         <SectionTitle
           right={
@@ -183,68 +221,94 @@ export default function MealDetailScreen() {
         >
           Ingredients
         </SectionTitle>
-        <Card className="divide-y divide-line overflow-hidden">
-          {recipe.ingredients.map((ri) => {
-            const ing = findIngredient(ri.ingredientId);
-            const have = inventoryIds.includes(ri.ingredientId);
-            const assumed = isAssumedPantry(ri.ingredientId);
-            const qty = formatQuantity(ri, servings, ing);
-            const name = ing?.name ?? ri.ingredientId;
-            return (
-              <div key={ri.ingredientId} className="flex items-center justify-between gap-3 px-4 py-3.5 sm:px-5">
-                <div className="min-w-0">
-                  <span className="text-[15px] font-semibold">
-                    {name}
-                    {ri.optional && (
-                      <span className="ml-1.5 text-[11px] font-medium text-muted">optional</span>
-                    )}
-                  </span>
-                </div>
-                <div className="flex shrink-0 items-center gap-2.5">
-                  <span className="text-[15px] font-bold text-flame-deep">{qty}</span>
-                  {!have && !ri.optional && !assumed && (
-                    <button
-                      onClick={() => addItem(ri.ingredientId)}
-                      className="rounded-full bg-ink/[0.055] px-2.5 py-1 text-[11px] font-semibold text-ink transition-colors hover:bg-ink/10"
-                    >
-                      + I have it
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </Card>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {/* YOU HAVE — cores owned first, then owned optionals */}
+ {haveList.length > 0 && (
+            <Card className="p-4 sm:p-5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-sage">
+                You have
+              </p>
+              <ul className="mt-2.5 space-y-1.5">
+                {haveList.map(({ ri, ing, qty }) => (
+                  <li key={ri.ingredientId} className="flex items-center justify-between gap-3 text-[14.5px]">
+                    <span className="flex min-w-0 items-center gap-2 font-semibold">
+                      <span aria-hidden className="text-sage">✓</span>
+                      <span className="truncate">{ing?.name ?? ri.ingredientId}</span>
+                      {ri.optional && (
+                        <span className="text-[11px] font-medium text-muted">optional</span>
+                      )}
+                    </span>
+                    <span className="shrink-0 text-[14px] font-bold text-flame-deep">{qty}</span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
 
-        {missing.length > 0 && (
-          <Card className="mt-3 border-dashed p-5">
-            <p className="text-[14px] font-semibold">
-              {missing.length === 1
-                ? "You're missing 1 thing."
-                : `You're missing ${missing.length} things.`}
-            </p>
-            <div className="mt-2.5 space-y-2">
-              {missing.map((mid) => {
-                const sub = recipe.substitutions.find((s) => s.missingId === mid);
-                const name = findIngredient(mid)?.name ?? mid;
-                const swapOwned = sub?.useId ? inventoryIds.includes(sub.useId) : false;
-                const swapName = sub?.useId ? findIngredient(sub.useId)?.name : undefined;
-                return (
-                  <div key={mid} className="text-[13px] leading-relaxed text-muted">
-                    <span className="font-semibold text-ink">{name}:</span>{" "}
-                    {swapOwned && swapName && sub ? (
-                      <>
-                        You have <span className="font-semibold text-sage">{swapName.toLowerCase()}</span> —{" "}
-                        {sub.message}
-                      </>
-                    ) : (
-                      sub?.message ?? "Check the fridge again — or improvise boldly."
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </Card>
+          {/* YOU NEED — genuinely missing cores, honest, with add + swap */}
+          {missing.length > 0 && (
+            <Card className="border-dashed p-4 sm:p-5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-flame-deep">
+                {missing.length === 1 ? "Missing 1 ingredient" : `Missing ${missing.length} ingredients`}
+              </p>
+              <ul className="mt-2.5 space-y-2">
+                {missing.map((mid) => {
+                  const sub = recipe.substitutions.find((s) => s.missingId === mid);
+                  const name = findIngredient(mid)?.name ?? mid;
+                  const swapOwned = sub?.useId ? inventoryIds.includes(sub.useId) : false;
+                  const swapName = sub?.useId ? findIngredient(sub.useId)?.name : undefined;
+                  return (
+                    <li key={mid} className="text-[13.5px] leading-relaxed">
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-ink">{name}</span>
+                        <button
+                          onClick={() => addItem(mid)}
+                          className="rounded-full bg-ink/[0.055] px-2.5 py-1 text-[11px] font-semibold text-ink transition-colors hover:bg-ink/10"
+                        >
+                          + I have it
+                        </button>
+                      </span>
+                      {swapOwned && swapName && sub ? (
+                        <span className="text-muted">
+                          You have <span className="font-semibold text-sage">{swapName.toLowerCase()}</span> — {sub.message}
+                        </span>
+                      ) : (
+                        sub?.message && <span className="text-muted">{sub.message}</span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+          )}
+
+          {/* OPTIONAL — nice-to-have; never a blocker (never in YOU NEED) */}
+          {optionalNotOwned.length > 0 && (
+            <Card className="p-4 sm:p-5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted">
+                Optional — nice to have
+              </p>
+              <ul className="mt-2.5 flex flex-wrap gap-1.5">
+                {optionalNotOwned.map(({ ri, ing }) => (
+                  <li
+                    key={ri.ingredientId}
+                    className="rounded-full border border-line bg-cream px-3 py-1.5 text-[12.5px] font-medium text-ink-soft"
+                  >
+                    ○ {ing?.name ?? ri.ingredientId}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-[12px] text-muted">Skip freely — the dish works without them.</p>
+            </Card>
+          )}
+        </div>
+
+        {/* PANTRY — the assumed staples, one quiet footnote line */}
+        {pantryUsed.length > 0 && (
+          <p className="mt-3 text-[12.5px] leading-relaxed text-muted">
+            <span className="font-semibold text-ink-soft">You usually have:</span>{" "}
+            {pantryUsed.join(", ")} — assumed in every RUCHI recipe.
+          </p>
         )}
       </div>
 

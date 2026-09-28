@@ -332,7 +332,7 @@ export const INGREDIENTS: Ingredient[] = [
   {
     id: "bread",
     name: "Bread",
-    aliases: ["bread", "pav", "loaf"],
+    aliases: ["bread", "pav", "loaf", "toast", "sandwich bread", "milk bread", "bun", "buns"],
     category: "grain",
     nutritionPer100: { kcal: 265, protein: 9, carbs: 49, fat: 3.2, fiber: 2.7 },
     costPer100: 8,
@@ -377,7 +377,27 @@ export const INGREDIENTS: Ingredient[] = [
   {
     id: "noodles",
     name: "Instant noodles",
-    aliases: ["noodles", "maggi", "instant noodles", "ramen"],
+    // Brand → family normalization: every common Indian packaged-noodle name
+    // resolves to ONE canonical ingredient. The matching layer treats them
+    // identically; recipe names keep the brand flavor ("Maggi Masala").
+    aliases: [
+      "noodles",
+      "maggi",
+      "maggi noodles",
+      "nestle maggi",
+      "2-minute noodles",
+      "2 minute noodles",
+      "masala noodles",
+      "yippee",
+      "yippee noodles",
+      "sunfeast yippee",
+      "top ramen",
+      "ramen",
+      "instant noodles",
+      "chowmin",
+      "chow mein",
+      "hakka noodles",
+    ],
     category: "grain",
     nutritionPer100: { kcal: 440, protein: 9, carbs: 60, fat: 17 },
     costPer100: 25,
@@ -692,6 +712,15 @@ export const INGREDIENTS: Ingredient[] = [
   },
 
   // ── Dairy & fats ─────────────────────────────────────────
+  {
+    id: "cheese",
+    name: "Cheese",
+    aliases: ["cheese", "cheese slices", "processed cheese", "amul cheese", "cheddar", "mozzarella"],
+    category: "dairy",
+    nutritionPer100: { kcal: 402, protein: 25, carbs: 1.3, fat: 33 },
+    costPer100: 65,
+    tags: ["high-protein", "expires-fast"],
+  },
   {
     id: "cream",
     name: "Fresh cream",

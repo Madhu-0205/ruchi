@@ -120,6 +120,11 @@ export interface Recipe {
   id: string;
   name: string;
   teluguName?: string;
+  /**
+   * Search/display aliases ("Maggi Masala" → "masala maggi", "plain maggi").
+   * Powers searchRecipes and Discover; NOT used for ingredient matching.
+   */
+  aliases?: string[];
   description: string; // one-liner, RUCHI voice
   cuisine: string;
   diet: DietTag;
@@ -137,6 +142,12 @@ export interface Recipe {
   beginnerTips: string[];
   substitutions: SubstitutionRule[];
   deliveryCompare: { name: string; cost: number }; // what ordering this would cost
+  /**
+   * When to trust this recipe's match: extra ranking signal for dishes whose
+   * core identity is one specific ingredient (instant-noodle family: any
+   * pack + tastemaker IS the dish). Deterministic: pure ranking bonus.
+   */
+  confidenceHints?: string[];
 }
 
 export interface SubstitutionRule {

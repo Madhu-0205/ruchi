@@ -37,8 +37,8 @@ Rules:
 - Use simple common ingredient names (for example: tomato, onion, paneer, eggs, rice, curd).
 - Do not include utensils.
 - Do not include plates, bowls, containers, countertops, or other non-food items.
-- Do not include packaging as an ingredient.
 - Do not invent ingredients that are not visibly present.
+- Packaged FOOD products ARE ingredients when the food itself is visible (a Maggi or Yippee noodle packet, a bread loaf, a cheese slice): report the product name in lowercase (for example "maggi", "yippee", "bread", "cheese slices"). Only packaging with no visible food identity should be skipped.
 - Only include ingredients that are reasonably identifiable.
 - Avoid duplicate ingredients.
 - Prefer RAW ingredients over cooked dishes: name the items you can see, not the meal they might become.

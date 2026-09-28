@@ -137,9 +137,12 @@ export function searchRecipes(query: string): Recipe[] {
     let score = 0;
     const name = r.name.toLowerCase();
 
-    // Name matches dominate.
+    // Name matches dominate (aliases count as names — "masala maggi" finds
+    // Maggi Masala).
     if (name === q) score += 100;
     else if (name.includes(q)) score += 60;
+    else if (r.aliases?.some((a) => a === q)) score += 90;
+    else if (r.aliases?.some((a) => a.includes(q) || q.includes(a))) score += 50;
     else {
       // word-level name hits
       for (const w of words) if (name.includes(w)) score += 20;

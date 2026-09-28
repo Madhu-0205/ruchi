@@ -7,7 +7,6 @@ import { Card, Chip, EmptyState, SectionHeading, SectionTitle, ShimmerSweep } fr
 import { RuchiLogo } from "@/components/RuchiLogo";
 import { FoodVisual } from "@/components/FoodVisual";
 import { RecipeCard } from "@/components/RecipeCard";
-import { StaggerGroup, StaggerItem } from "@/components/motion";
 import { useRuchi } from "@/lib/store";
 import { useScreen } from "@/lib/store/screens";
 import { INGREDIENTS, searchIngredients } from "@/lib/data/ingredients";
@@ -718,71 +717,90 @@ export default function HomeScreen() {
         )}
       </section>
 
-      {/* ── Recommendations — revealed by Find My Meal (the featured pick leads) ── */}
+      {/* ── Results — ONE dominant answer, then quiet alternatives (spec §16) ── */}
       {hasInventory && findMyMealUsed && (
         <section className="mt-14 scroll-mt-24" id="ruchi-results" aria-live="polite">
           <SectionHeading
             eyebrow="From your kitchen"
-            title={`I found ${shown.length} meal${shown.length === 1 ? "" : "s"} for you.`}
+            title={shown.length > 0 ? "Your best match" : "Nothing obvious yet"}
           />
 
-          {shown.length === 0 ? (
+          {shown.length === 0 || !shown[0] ? (
             <EmptyState
               icon={<Sparkles size={20} />}
-              title="I couldn't find a great match"
-              body="Try adding another ingredient or relaxing your filters — RUCHI only shows meals you can actually cook right now."
+              title="Nothing obvious yet."
+              body="Try adding one more ingredient — RUCHI only shows meals you can actually cook right now."
             />
           ) : (
-            <StaggerGroup className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {shown.map((rec) => {
-                const r = rec.recipe;
-                const n = computeNutrition(r, people);
-                const cost = computeCostPerServing(r, people);
+            <>
+              {/* The decision, made: the top pick dominates the viewport. */}
+              {(() => {
+                const best = shown[0]!;
                 return (
-                  <StaggerItem key={r.id}>
-                    <RecipeCard
-                      recipe={r}
-                      protein={n.protein}
-                      calories={n.calories}
-                      costPerServing={cost}
-                      missingCount={rec.missing.length}
-                      canCookNow={rec.missing.length === 0}
-                      coreMatched={rec.coreMatched}
-                      coreTotal={rec.coreTotal}
-                      reason={rec.reason}
-                      tags={r.tags}
-                      why={rec.why}
-                      notNeeded={rec.notNeeded}
-                      deliveryCompareCost={r.deliveryCompare.cost}
-                      onClick={() => {
-                        track("meal_selected", { recipeId: r.id, via: "home" });
-                        go("meal", { recipeId: r.id });
-                      }}
-                      onCook={() => {
-                        track("meal_selected", { recipeId: r.id, via: "cook-direct" });
-                        go("cooking", { recipeId: r.id });
-                      }}
-                    />
-                  </StaggerItem>
+                  <FeaturedMeal
+                    recipe={best.recipe}
+                    protein={computeNutrition(best.recipe, people).protein}
+                    costPerServing={computeCostPerServing(best.recipe, people)}
+                    matchedLine={
+                      best.coreMatched != null
+                        ? best.category === "CAN_COOK_NOW"
+                          ? "You already have everything essential."
+                          : `You have ${best.coreMatched}/${best.coreTotal} essential ingredients.`
+                        : best.reason
+                    }
+                    onCook={() => {
+                      track("meal_selected", { recipeId: best.recipe.id, via: "result-cook" });
+                      go("cooking", { recipeId: best.recipe.id });
+                    }}
+                    onDetails={() => {
+                      track("meal_selected", { recipeId: best.recipe.id, via: "result-details" });
+                      go("meal", { recipeId: best.recipe.id });
+                    }}
+                  />
                 );
-              })}
-            </StaggerGroup>
-          )}
+              })()}
 
-          {/* Phase 6: can't decide? The engine picks, cooking starts. */}
-          {shown.length > 0 && (
-            <div className="mt-7 flex flex-col items-start gap-3 sm:flex-row sm:items-center">
-              <button
-                onClick={ruchiChooses}
-                className="inline-flex items-center gap-2 rounded-2xl border border-line-strong bg-surface px-6 py-3.5 text-[15px] font-semibold text-ink shadow-soft transition-all duration-200 hover:border-ink/25 hover:shadow-lifted active:scale-[0.98]"
-              >
-                <Shuffle size={16} className="text-flame" aria-hidden />
-                Not sure? Let RUCHI choose ✨
-              </button>
-              <p className="text-[13px] leading-relaxed text-muted">
-                Picks the best match from your kitchen and starts the step-by-step cook.
-              </p>
-            </div>
+              {/* Other good options — max 2, quiet rows, no competing CTAs. */}
+              {shown.length > 1 && (
+                <div className="mt-8">
+                  <SectionTitle>Other good options</SectionTitle>
+                  <div className="space-y-2.5">
+                    {shown.slice(1, 3).map((rec) => {
+                      const r = rec.recipe;
+                      const n = computeNutrition(r, people);
+                      const cost = computeCostPerServing(r, people);
+                      return (
+                        <button
+                          key={r.id}
+                          type="button"
+                          onClick={() => {
+                            track("meal_selected", { recipeId: r.id, via: "alternative" });
+                            go("meal", { recipeId: r.id });
+                          }}
+                          className="flex w-full items-center gap-4 rounded-2xl border border-line bg-surface px-4 py-3.5 text-left shadow-soft transition-all duration-200 hover:border-line-strong hover:shadow-lifted"
+                        >
+                          <FoodVisual
+                            recipe={r}
+                            emojiClassName="text-2xl"
+                            className="h-12 w-12 shrink-0 rounded-xl"
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[15px] font-semibold text-ink">{r.name}</span>
+                            <span className="mt-0.5 block text-[12.5px] text-muted">
+                              {rec.minutes} min · {n.protein}g protein · ₹{cost}
+                              {rec.category !== "CAN_COOK_NOW" && rec.missing.length > 0
+                                ? ` · ${rec.missing.length} missing`
+                                : ""}
+                            </span>
+                          </span>
+                          <span aria-hidden className="shrink-0 text-muted">→</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
           {/* ── Almost there — clearly labeled, NEVER mixed into primary ── */}

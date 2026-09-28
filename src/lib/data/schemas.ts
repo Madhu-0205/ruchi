@@ -81,6 +81,7 @@ export const recipeSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   teluguName: z.string().optional(),
+  aliases: z.array(z.string().min(1)).optional(),
   description: z.string().min(1),
   cuisine: z.string().min(1),
   diet: z.enum(["veg", "egg", "nonveg"]),
@@ -130,6 +131,7 @@ export const recipeSchema = z.object({
   beginnerTips: z.array(z.string()),
   substitutions: z.array(substitutionRuleSchema),
   deliveryCompare: z.object({ name: z.string(), cost: z.number().min(0) }),
+  confidenceHints: z.array(z.string().min(1)).optional(),
 }) satisfies z.ZodType<Recipe>;
 
 // ── AI response contracts ───────────────────────────────────

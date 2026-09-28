@@ -40,6 +40,10 @@ export interface MatchScore {
   /** matched/total core-ingredient counts powering the "4/4" card line. */
   coreMatched: number;
   coreTotal: number;
+  /** Owned optional add-ins — the YOU HAVE row the card can highlight. */
+  optionalHave: string[];
+  /** Unowned optional add-ins — “you don’t need these”, never a blocker. */
+  optionalMissing: string[];
 }
 
 /**
@@ -170,6 +174,13 @@ export function matchRecipes(f: MatchFilters): MatchScore[] {
     if (category === "CAN_COOK_NOW") score += 25;
     else if (category === "ADAPTABLE") score -= 5;
 
+    // confidenceHints: recipes whose identity is one specific ingredient
+    // (the instant-noodle family) rank their family-mates up when the user
+    // owns that ingredient. Deterministic, small, and additive — it can
+    // break ties toward Maggi Masala over unrelated equals, never over a
+    // better-matched dish.
+    if (r.confidenceHints?.some((h) => has.has(h))) score += 6;
+
     scores.push({
       recipe: r,
       score,
@@ -181,6 +192,12 @@ export function matchRecipes(f: MatchFilters): MatchScore[] {
       category,
       coreMatched: coreHave.length,
       coreTotal: core.length,
+      optionalHave: r.ingredients
+        .filter((i) => i.optional && has.has(i.ingredientId))
+        .map((i) => i.ingredientId),
+      optionalMissing: r.ingredients
+        .filter((i) => i.optional && !has.has(i.ingredientId))
+        .map((i) => i.ingredientId),
     });
   }
 
@@ -201,6 +218,10 @@ export interface Recommendation {
   difficulty: "easy" | "medium";
   /** Missing item names that are optional in the recipe — “don’t need it”. */
   notNeeded: string[];
+  /** Owned optional add-ins (ids) — the YOU HAVE optional row. */
+  optionalHave: string[];
+  /** Unowned optional add-ins (ids) — “nice to have”, never a blocker. */
+  optionalMissing: string[];
   /** Ingredient-grounded category — drives the "cook right now" framing. */
   category: MatchScore["category"];
   /** matched/total core-ingredient counts, e.g. 4/4. */
@@ -289,6 +310,8 @@ export function nearRecipes(f: MatchFilters, limit = 4): Recommendation[] {
       minutes: m.recipe.timeMin,
       difficulty: m.recipe.difficulty,
       notNeeded,
+      optionalHave: m.optionalHave,
+      optionalMissing: m.optionalMissing,
       category: m.category,
       coreMatched: m.coreMatched,
       coreTotal: m.coreTotal,
@@ -386,6 +409,8 @@ export function recommend(f: MatchFilters, aiPicks?: { recipeId: string; matchRe
       minutes: m.recipe.timeMin,
       difficulty: m.recipe.difficulty,
       notNeeded,
+      optionalHave: m.optionalHave,
+      optionalMissing: m.optionalMissing,
       category: m.category,
       coreMatched: m.coreMatched,
       coreTotal: m.coreTotal,

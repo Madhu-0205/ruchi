@@ -311,25 +311,23 @@ export default function ScanScreen() {
                 <ScanLine size={30} strokeWidth={2} className="text-flame" />
               </motion.div>
               <h1 className="relative mt-5 font-display text-display-lg font-semibold">
-                Show me what you&apos;ve got
+                What do you have?
               </h1>
               <p className="relative mx-auto mt-3 max-w-sm text-[14.5px] leading-relaxed text-cream/70">
-                One photo of your counter, fridge or groceries.
-                <br />
-                RUCHI finds the ingredients — you confirm.
+                Show RUCHI your ingredients and we&apos;ll figure out dinner.
               </p>
               <div className="relative mt-7 flex flex-col gap-3">
                 <button
                   onClick={() => cameraInputRef.current?.click()}
                   className="mx-auto flex w-full max-w-xs items-center justify-center gap-2 rounded-2xl bg-cream px-6 py-4 text-[15px] font-bold text-ink shadow-lifted transition-all hover:bg-white active:scale-[0.98]"
                 >
-                  <Camera size={18} /> Snap your ingredients
+                  <Camera size={18} /> Scan ingredients
                 </button>
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   className="mx-auto flex w-full max-w-xs items-center justify-center gap-2 rounded-2xl border border-cream/25 px-6 py-3.5 text-[14px] font-semibold text-cream/90 transition-all hover:bg-cream/10 active:scale-[0.98]"
                 >
-                  <ImageIcon size={17} /> Upload from gallery
+                  <ImageIcon size={17} /> Upload photo
                 </button>
               </div>
               <p className="relative mt-5 text-[11px] text-cream/50">
@@ -453,7 +451,7 @@ export default function ScanScreen() {
               )}
               <div>
                 <h1 className="font-display text-display-md font-semibold">
-                  {previewUrl ? "I found these 👀" : "Got it — here's what I heard 👀"}
+                  {previewUrl ? `We found ${items.length} ingredient${items.length === 1 ? "" : "s"}` : "Got it — here's what I heard"}
                 </h1>
                 <p className="text-[13px] text-muted">
                   {uncertainCount > 0
@@ -582,7 +580,7 @@ export default function ScanScreen() {
                 onClick={confirmAndRecommend}
                 disabled={confidentCount === 0}
               >
-                <ScanLine size={18} /> Find my meals →
+                <ScanLine size={18} /> Everything looks right →
               </Button>
               {confidentCount === 0 && (
                 <p className="mt-2 text-center text-[12px] text-muted">

@@ -4,6 +4,7 @@ import { useDeferredValue, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Search, SlidersHorizontal, X } from "lucide-react";
 import { EmptyState, SectionTitle } from "@/components/ui";
+import { Reveal } from "@/components/motion";
 import { RecipeCard } from "@/components/RecipeCard";
 import { useScreen } from "@/lib/store/screens";
 import { useRuchi } from "@/lib/store";
@@ -287,9 +288,9 @@ export default function DiscoverScreen() {
         {searching ? `Results for “${deferredQuery.trim()}”` : col.label}
       </SectionTitle>
 
-      {/* Grid */}
+      {/* Grid — editorial slow reveals, one-shot as cards scroll in */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {items.map((r) => {
+        {items.map((r, i) => {
           const n = computeNutrition(r, 1);
           const cost = computeCostPerServing(r, 1);
           const missingCount = r.ingredients.filter(
@@ -299,16 +300,17 @@ export default function DiscoverScreen() {
               !inventoryIds.includes(ri.ingredientId),
           ).length;
           return (
-            <RecipeCard
-              key={r.id}
-              recipe={r}
-              protein={n.protein}
-              calories={n.calories}
-              costPerServing={cost}
-              missingCount={missingCount}
-              canCookNow={missingCount === 0}
-              onClick={() => go("meal", { recipeId: r.id })}
-            />
+            <Reveal key={r.id} delay={Math.min(i * 0.03, 0.2)}>
+              <RecipeCard
+                recipe={r}
+                protein={n.protein}
+                calories={n.calories}
+                costPerServing={cost}
+                missingCount={missingCount}
+                canCookNow={missingCount === 0}
+                onClick={() => go("meal", { recipeId: r.id })}
+              />
+            </Reveal>
           );
         })}
       </div>

@@ -30,6 +30,8 @@ import {
   completionEcho,
 } from "@/lib/personality";
 import { RingProgress } from "@/components/ui";
+import { Celebration } from "@/components/motion";
+import { stepTransition } from "@/lib/motion";
 import type { AiHelpAnswer } from "@/lib/data/schemas";
 import type { RecipeStep } from "@/lib/types";
 
@@ -340,10 +342,7 @@ export default function CookingMode() {
           <AnimatePresence mode="wait">
             <motion.div
               key={stepIndex}
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.18 }}
+              {...stepTransition}
               className="flex-1"
             >
               {step && (
@@ -374,17 +373,29 @@ export default function CookingMode() {
                     <div className="mt-6 rounded-3xl border border-cream/10 bg-cream/[0.06] p-5">
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex items-center gap-4">
-                          <RingProgress
-                            progress={
-                              countdown.remaining !== null && countdown.total > 0
-                                ? countdown.remaining / countdown.total
-                                : 0
-                            }
-                            size={76}
-                            stroke={5}
+                          <motion.div
+                            {...(countdown.running &&
+                            countdown.remaining !== null &&
+                            countdown.remaining <= 15 &&
+                            !reduceMotion
+                              ? {
+                                  animate: { scale: [1, 1.04, 1] },
+                                  transition: { duration: 1.2, repeat: Infinity, ease: "easeInOut" },
+                                }
+                              : {})}
                           >
-                            <Timer size={16} className="text-flame" />
-                          </RingProgress>
+                            <RingProgress
+                              progress={
+                                countdown.remaining !== null && countdown.total > 0
+                                  ? countdown.remaining / countdown.total
+                                  : 0
+                              }
+                              size={76}
+                              stroke={5}
+                            >
+                              <Timer size={16} className="text-flame" />
+                            </RingProgress>
+                          </motion.div>
                           <div>
                             <p className="text-[12px] font-semibold uppercase tracking-wide text-cream/50">
                               Suggested timer
@@ -453,8 +464,8 @@ export default function CookingMode() {
         </div>
       </div>
 
-      {/* Bottom actions — quiet zone */}
-      <div className="border-t border-cream/10 bg-ink px-4 pb-[max(env(safe-area-inset-bottom),16px)] pt-3.5 lg:px-8">
+      {/* Bottom actions — quiet zone, floating glass-dark chrome */}
+      <div className="glass-dark border-t border-cream/10 px-4 pb-[max(env(safe-area-inset-bottom),16px)] pt-3.5 lg:px-8">
         <div className="mx-auto max-w-xl">
           <div className="flex gap-3">
             {stepIndex > 0 && (
@@ -660,7 +671,9 @@ function CompletionView({
         : null;
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-ink text-cream">
-      <div className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
+      <div className="relative flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
+        {/* The one restrained celebratory moment — soft bloom, then quiet. */}
+        <Celebration active />
         <motion.div
           initial={reduceMotion ? false : { scale: 0.6, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}

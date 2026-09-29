@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowLeft, ChefHat, Flame, ShoppingBag, Sparkles } from "lucide-react";
 import { Button, Card, MetaLine, NumberFlow, Pill, SectionTitle, ShimmerSweep, Stat } from "@/components/ui";
+import { SpringButton } from "@/components/motion";
+import { heroReveal } from "@/lib/motion";
 import { FoodVisual } from "@/components/FoodVisual";
 import { useScreen } from "@/lib/store/screens";
 import { useRuchi } from "@/lib/store";
@@ -108,15 +110,17 @@ export default function MealDetailScreen() {
         <Pill className="capitalize">{recipe.difficulty} · {recipe.cuisine}</Pill>
       </div>
 
-      {/* ── Editorial hero ───────────────────────────────── */}
+      {/* ── Editorial hero — image settles first, text follows ── */}
       <div className="lg:grid lg:grid-cols-[1.1fr_0.9fr] lg:items-center lg:gap-14">
-        <FoodVisual
-          recipe={recipe}
-          emojiClassName="text-7xl sm:text-8xl lg:text-9xl"
-          className="aspect-[4/3] w-full rounded-[2rem] sm:aspect-[16/9] lg:aspect-[4/3]"
-        />
+        <motion.div {...heroReveal.image}>
+          <FoodVisual
+            recipe={recipe}
+            emojiClassName="text-7xl sm:text-8xl lg:text-9xl"
+            className="aspect-[4/3] w-full rounded-[2rem] sm:aspect-[16/9] lg:aspect-[4/3]"
+          />
+        </motion.div>
 
-        <div className="mt-7 lg:mt-0">
+        <motion.div {...heroReveal.title} className="mt-7 lg:mt-0">
           <h1 className="font-display text-display-xl font-semibold">{recipe.name}</h1>
           {recipe.teluguName && <p className="mt-2 text-[15px] text-muted">{recipe.teluguName}</p>}
           <p className="mt-4 max-w-md text-[15.5px] leading-relaxed text-ink-soft sm:text-[16px]">
@@ -136,21 +140,23 @@ export default function MealDetailScreen() {
           />
 
           <div className="mt-7 hidden lg:block">
-            <Button
-              variant="flame"
-              size="lg"
-              className="w-full sm:w-auto"
-              onClick={() => {
-                useRuchi.getState().setPrefs({ defaultServings: people });
-                go("cooking", { recipeId: recipe.id });
-              }}
-            >
-              <ShimmerSweep />
-              <ChefHat size={18} />
-              <span className="relative">Start cooking</span>
-            </Button>
+            <SpringButton>
+              <Button
+                variant="flame"
+                size="lg"
+                className="w-full sm:w-auto"
+                onClick={() => {
+                  useRuchi.getState().setPrefs({ defaultServings: people });
+                  go("cooking", { recipeId: recipe.id });
+                }}
+              >
+                <ShimmerSweep />
+                <ChefHat size={18} />
+                <span className="relative">Start cooking</span>
+              </Button>
+            </SpringButton>
           </div>
-        </div>
+        </motion.div>
       </div>
 
       {/* ── Nutrition band ───────────────────────────────── */}

@@ -57,6 +57,24 @@ export function ShimmerSweep({ className = "" }: { className?: string }) {
   );
 }
 
+// ── GlassSurface — the LIQUID accent material ───────────────
+// For floating controls and special moments ONLY (the nav, the
+// bottom action bar in cooking-adjacent flows, overlay chrome).
+// The dominant surface of the app remains matte cream — glass is
+// an accent, not a material language (see globals.css `.liquid`).
+export function GlassSurface({
+  children,
+  className = "",
+  dark = false,
+}: {
+  children: ReactNode;
+  className?: string;
+  /** Dark variant for overlays on the ink cooking surface. */
+  dark?: boolean;
+}) {
+  return <div className={`${dark ? "glass-dark" : "liquid"} rounded-3xl ${className}`}>{children}</div>;
+}
+
 // ── Card ────────────────────────────────────────────────────
 export function Card({
   children,

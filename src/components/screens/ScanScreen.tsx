@@ -14,7 +14,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { Button, Card, Chip, Note, SectionTitle } from "@/components/ui";
+import { Button, Card, Chip, GlassSurface, Note, SectionTitle } from "@/components/ui";
 import { visionDebug } from "@/lib/ai/observability";
 import { useScreen } from "@/lib/store/screens";
 import { useRuchi } from "@/lib/store";
@@ -316,20 +316,27 @@ export default function ScanScreen() {
               <p className="relative mx-auto mt-3 max-w-sm text-[14.5px] leading-relaxed text-cream/70">
                 Show RUCHI your ingredients and we&apos;ll figure out dinner.
               </p>
-              <div className="relative mt-7 flex flex-col gap-3">
+              {/* Glass accent: the ONE floating control on this screen — the
+                  capture action bar. Same glass-dark language as CookingMode's
+                  bottom chrome; the viewfinder's ambient glow behind it makes
+                  the blur perceptible. Not a material change to the card. */}
+              <GlassSurface
+                dark
+                className="relative mt-7 flex w-full max-w-xs flex-col gap-3 p-3 self-center mx-auto"
+              >
                 <button
                   onClick={() => cameraInputRef.current?.click()}
-                  className="mx-auto flex w-full max-w-xs items-center justify-center gap-2 rounded-2xl bg-cream px-6 py-4 text-[15px] font-bold text-ink shadow-lifted transition-all hover:bg-white active:scale-[0.98]"
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-cream px-6 py-4 text-[15px] font-bold text-ink shadow-lifted transition-all hover:bg-white active:scale-[0.98]"
                 >
                   <Camera size={18} /> Scan ingredients
                 </button>
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="mx-auto flex w-full max-w-xs items-center justify-center gap-2 rounded-2xl border border-cream/25 px-6 py-3.5 text-[14px] font-semibold text-cream/90 transition-all hover:bg-cream/10 active:scale-[0.98]"
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl border border-cream/25 px-6 py-3.5 text-[14px] font-semibold text-cream/90 transition-all hover:bg-cream/10 active:scale-[0.98]"
                 >
                   <ImageIcon size={17} /> Upload photo
                 </button>
-              </div>
+              </GlassSurface>
               <p className="relative mt-5 text-[11px] text-cream/50">
                 Fit your ingredients inside the frame · processed instantly, never stored
               </p>

@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Camera, Search, Sparkles, X, Shuffle } from "lucide-react";
 import { Card, Chip, EmptyState, SectionHeading, SectionTitle, ShimmerSweep } from "@/components/ui";
+import { TextSwap, SpringButton, Reveal } from "@/components/motion";
+import { heroReveal } from "@/lib/motion";
 import { RuchiLogo } from "@/components/RuchiLogo";
 import { FoodVisual } from "@/components/FoodVisual";
 import { RecipeCard } from "@/components/RecipeCard";
@@ -340,15 +342,18 @@ export default function HomeScreen() {
             </p>
           </div>
           <h1 className="mt-4 font-display text-display-hero font-semibold lg:mt-0">
-            {headline.split("\n").map((line, i) => (
-              <span key={i} className="block">
-                {i === 0 ? (
-                  line
-                ) : (
-                  <span className="accent-italic text-flame">{line}</span>
-                )}
-              </span>
-            ))}
+            {/* Context changes swap in with a subtle exit→enter — never a hard replace. */}
+            <TextSwap textKey={headline}>
+              {headline.split("\n").map((line, i) => (
+                <span key={i} className="block">
+                  {i === 0 ? (
+                    line
+                  ) : (
+                    <span className="accent-italic text-flame">{line}</span>
+                  )}
+                </span>
+              ))}
+            </TextSwap>
           </h1>
           <p className="mt-5 max-w-md text-[16px] leading-relaxed text-muted lg:text-[17px]">
             {supportLine}
@@ -911,6 +916,7 @@ export default function HomeScreen() {
       )}
 
       {/* ── Cook something good — editorial rows ─────────── */}
+      <Reveal>
       <section className="mt-16">
         <SectionHeading
           eyebrow="The kitchen, decided"
@@ -940,6 +946,7 @@ export default function HomeScreen() {
           ))}
         </div>
       </section>
+      </Reveal>
 
       {/* ── Quick meals ──────────────────────────────────── */}
       <section className="mt-16">
@@ -1069,42 +1076,52 @@ function FeaturedMeal({
   return (
     <div aria-label={`Featured meal: ${recipe.name}`}>
       <div className="relative rounded-[2rem] border border-line bg-surface p-5 shadow-lifted sm:p-7">
-        <FoodVisual
-          recipe={recipe}
-          zoom
-          emojiClassName="text-7xl sm:text-8xl"
-          className="aspect-[16/10] w-full rounded-2xl"
-        />
-        <div className="mt-5 flex items-start justify-between gap-4">
+        {/* Reveal hierarchy: image settles first, text follows, CTA springs last. */}
+        <motion.div {...heroReveal.image}>
+          <FoodVisual
+            recipe={recipe}
+            zoom
+            emojiClassName="text-7xl sm:text-8xl"
+            className="aspect-[16/10] w-full rounded-2xl"
+          />
+        </motion.div>
+        <motion.div {...heroReveal.title} className="mt-5 flex items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="font-display text-[24px] font-semibold leading-snug">{recipe.name}</p>
-            <p className="mt-1.5 text-[13.5px] font-medium text-muted">
-              {recipe.timeMin} min
-              <span aria-hidden className="mx-1.5 text-line-strong">·</span>
-              {protein}g protein
-              <span aria-hidden className="mx-1.5 text-line-strong">·</span>
-              ~₹{costPerServing}
-            </p>
-            {matchedLine && (
-              <p className="mt-1 text-[13.5px] font-medium text-sage">{matchedLine}</p>
-            )}
           </div>
-        </div>
-        <div className="mt-5 flex flex-col gap-2.5 sm:flex-row sm:items-center">
-          <button
-            onClick={onCook}
-            className="relative inline-flex flex-1 items-center justify-center gap-2.5 overflow-hidden rounded-2xl bg-flame px-8 py-4 text-[16px] font-bold text-white shadow-cta transition-all duration-200 hover:bg-flame-deep active:scale-[0.98]"
-          >
-            <ShimmerSweep />
-            <span className="relative">Cook this →</span>
-          </button>
+        </motion.div>
+        <motion.div {...heroReveal.meta}>
+          <p className="mt-1.5 text-[13.5px] font-medium text-muted">
+            {recipe.timeMin} min
+            <span aria-hidden className="mx-1.5 text-line-strong">·</span>
+            {protein}g protein
+            <span aria-hidden className="mx-1.5 text-line-strong">·</span>
+            ~₹{costPerServing}
+          </p>
+          {matchedLine && (
+            <p className="mt-1 text-[13.5px] font-medium text-sage">{matchedLine}</p>
+          )}
+        </motion.div>
+        <motion.div
+          {...heroReveal.cta}
+          className="mt-5 flex flex-col gap-2.5 sm:flex-row sm:items-center"
+        >
+          <SpringButton className="flex-1">
+            <button
+              onClick={onCook}
+              className="relative inline-flex w-full items-center justify-center gap-2.5 overflow-hidden rounded-2xl bg-flame px-8 py-4 text-[16px] font-bold text-white shadow-cta transition-colors duration-200 hover:bg-flame-deep"
+            >
+              <ShimmerSweep />
+              <span className="relative">Cook this →</span>
+            </button>
+          </SpringButton>
           <button
             onClick={onDetails}
             className="inline-flex items-center justify-center gap-2 rounded-2xl border border-line-strong bg-surface px-6 py-4 text-[15px] font-semibold text-ink transition-all duration-200 hover:border-ink/25 active:scale-[0.98]"
           >
             View details
           </button>
-        </div>
+        </motion.div>
         <p className="mt-3 text-center text-[12.5px] text-muted">{FEATURED_CTA_HINT}</p>
       </div>
     </div>

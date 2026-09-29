@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { CloudUpload, Loader2, LogOut } from "lucide-react";
-import { Button, Card, Pill, SectionTitle } from "@/components/ui"; // SectionHeading added where used below
+import { Button, Card, NumberFlow, Pill, SectionTitle } from "@/components/ui"; // SectionHeading added where used below
 import AuthCard from "@/components/AuthCard";
 import { useRuchi, streak, weeklyProgress } from "@/lib/store";
 import { FoodVisual } from "@/components/FoodVisual";
@@ -11,6 +11,11 @@ import { useScreen } from "@/lib/store/screens";
 import type { CookingStatsRow, NotificationChannel } from "@/lib/auth/supabase-data";
 import { insertBetaFeedback, type FeedbackTopic } from "@/lib/auth/supabase-data";
 import { buildNudges, weeklySummaryLine } from "@/lib/engine/nudge";
+import {
+  disableWebPush,
+  enableWebPush,
+  type SubscribeOutcome,
+} from "@/lib/notifications/subscribe";
 import type {
   BudgetPerMeal,
   DietPreference,
@@ -201,14 +206,16 @@ export default function ProfileScreen() {
           <SectionTitle>This week</SectionTitle>
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <p className="font-display text-[26px] font-semibold leading-none">{week.meals}</p>
+              <p className="font-display text-[26px] font-semibold leading-none">
+                <NumberFlow value={week.meals} />
+              </p>
               <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
                 meals cooked
               </p>
             </div>
             <div>
               <p className="font-display text-[26px] font-semibold leading-none text-gold">
-                ₹{week.saved}
+                <NumberFlow value={week.saved} prefix="₹" />
               </p>
               <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
                 saved (est.)
@@ -216,7 +223,7 @@ export default function ProfileScreen() {
             </div>
             <div>
               <p className="font-display text-[26px] font-semibold leading-none text-sage">
-                {week.protein}g
+                <NumberFlow value={week.protein} suffix="g" />
               </p>
               <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
                 protein
@@ -497,6 +504,36 @@ const NOTIF_CHANNELS: { id: NotificationChannel; label: string; hint: string; li
 function NotificationOptIn() {
   const channels = useRuchi((s) => s.notificationChannels);
   const setChannel = useRuchi((s) => s.setNotificationChannel);
+  const account = useRuchi((s) => s.account);
+  const [pushState, setPushState] = useState<"idle" | "working" | "error">("idle");
+  const [pushNote, setPushNote] = useState<string | null>(null);
+
+  const toggleWebPush = async (next: boolean) => {
+    setPushState("working");
+    setPushNote(null);
+    let outcome: SubscribeOutcome;
+    if (next) {
+      outcome = await enableWebPush();
+    } else {
+      outcome = await disableWebPush();
+    }
+    if (outcome.ok) {
+      setChannel("web_push", next);
+      setPushState("idle");
+      return;
+    }
+    setPushState("error");
+    if (outcome.reason === "denied") {
+      setPushNote("Notifications are blocked in your browser settings.");
+    } else if (outcome.reason === "unsupported") {
+      setPushNote("This browser can't do push notifications.");
+    } else if (outcome.reason === "unconfigured") {
+      setPushNote("Push isn't set up on the server yet — try again later.");
+    } else {
+      setPushNote("Couldn't save that just now — try again in a moment.");
+    }
+  };
+
   return (
     <Card className="mb-6 p-5 sm:p-6">
       <SectionTitle
@@ -509,6 +546,9 @@ function NotificationOptIn() {
       <div className="mt-3 space-y-3">
         {NOTIF_CHANNELS.map((ch) => {
           const on = channels[ch.id] === true;
+          const isWebPush = ch.id === "web_push";
+          const busy = isWebPush && pushState === "working";
+          const disabled = !ch.live || (isWebPush && busy);
           return (
             <div key={ch.id} className="flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -522,8 +562,18 @@ function NotificationOptIn() {
                 role="switch"
                 aria-checked={on}
                 aria-label={`${ch.label} notifications`}
-                disabled={!ch.live}
-                onClick={() => setChannel(ch.id, !on)}
+                disabled={disabled}
+                onClick={() => {
+                  if (isWebPush && account) {
+                    void toggleWebPush(!on);
+                  } else if (isWebPush) {
+                    // Signed out: store the preference locally; the
+                    // subscription flow runs when they sign in.
+                    setChannel("web_push", !on);
+                  } else {
+                    setChannel(ch.id, !on);
+                  }
+                }}
                 className={`relative h-8 w-14 shrink-0 rounded-full transition-colors duration-200 disabled:opacity-40 ${
                   on ? "bg-sage" : "bg-line-strong"
                 }`}
@@ -539,6 +589,11 @@ function NotificationOptIn() {
           );
         })}
       </div>
+      {pushNote && (
+        <p className="mt-3 text-[12.5px] text-flame" role="status">
+          {pushNote}
+        </p>
+      )}
       <p className="mt-4 border-t border-line pt-3 text-[12px] leading-relaxed text-muted">
         Off by default. If you turn these on, RUCHI will only reach out when it has
         something genuinely useful — and a quiet-hours limit always applies.

@@ -36,3 +36,4 @@ supabase/.temp/
 
 # Misnamed env file (kept local; contents migrated to .env.local)
 ruchi.env.local
+.vercel

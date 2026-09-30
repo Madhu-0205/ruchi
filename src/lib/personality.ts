@@ -170,9 +170,39 @@ export const CUE_NOT_PERFECT = "Close enough counts. Keep going.";
 
 // ── Completion ──────────────────────────────────────────────
 
-export const MADE_IT_HEADLINE = "You made it.";
+export const MADE_IT_HEADLINE = "Dinner done.";
 
-export const DIDNT_ORDER_LINE = "You didn't order dinner.\nYou made it. 🔥";
+export const DIDNT_ORDER_LINE = "You didn't order dinner.\nYou made it.";
+
+/**
+ * The real meal number — only ever called with the server-authoritative
+ * completed-meal count. First meal gets its own quiet milestone; every
+ * number here is a record that actually exists.
+ */
+export function mealNumberLine(mealNumber: number): string {
+  return mealNumber === 1 ? "Your first RUCHI meal." : `That's meal #${mealNumber}.`;
+}
+
+/**
+ * Streak line from REAL completed days only. A zero streak is silence —
+ * never "0 day streak". Rendered only when it returns a string.
+ */
+export function completionStreakLine(streakDays: number): string | null {
+  if (streakDays >= 2) return `${streakDays} days in a row.`;
+  if (streakDays === 1) return "Day one.";
+  return null;
+}
+
+/**
+ * Savings render ONLY when the comparison is defensible: both numbers are
+ * real, the delivery price exists, and cooking genuinely costs less.
+ * Returns null (→ render nothing, never ₹0) otherwise.
+ */
+export function defensibleSavings(cost: number, deliveryCost: number): number | null {
+  if (!(deliveryCost > 0) || !(cost >= 0)) return null;
+  const saved = deliveryCost - cost;
+  return saved > 0 ? saved : null;
+}
 
 /** Deterministic by cook count — the last line before they leave the screen. */
 export const COMPLETION_ECHO_LINES = [

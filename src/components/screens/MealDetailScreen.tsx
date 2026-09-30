@@ -361,11 +361,11 @@ export default function MealDetailScreen() {
         </Card>
       </div>
 
-      {/* Ordering empathy footer */}
+      {/* Ordering empathy footer — no invented delivery times or prices */}
       <p className="mb-4 mt-8 text-center text-[13px] leading-relaxed text-muted">
         <ShoppingBag size={12} className="mr-1 inline" />
         {recipe.timeMin <= 15
-          ? `${recipe.timeMin} minutes of cooking beats 30 minutes of waiting for delivery.`
+          ? `${recipe.timeMin} minutes from your own kitchen. Ordering can wait.`
           : "Ordering is fine. Cooking this is faster than you think — and you'll learn it once."}
       </p>
 

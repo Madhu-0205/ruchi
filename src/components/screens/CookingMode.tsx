@@ -28,12 +28,16 @@ import {
   milestoneLine,
   reassuranceLine,
   completionEcho,
+  mealNumberLine,
+  completionStreakLine,
+  defensibleSavings,
 } from "@/lib/personality";
 import { RingProgress } from "@/components/ui";
 import { Celebration } from "@/components/motion";
-import { stepTransition } from "@/lib/motion";
+import { FoodVisual } from "@/components/FoodVisual";
+import { stepTransition, EASE } from "@/lib/motion";
 import type { AiHelpAnswer } from "@/lib/data/schemas";
-import type { RecipeStep } from "@/lib/types";
+import type { Recipe, RecipeStep } from "@/lib/types";
 
 function useCountdown(minutes?: number) {
   const total = (minutes ?? 0) * 60;
@@ -106,6 +110,9 @@ export default function CookingMode() {
   const [aiHelp, setAiHelp] = useState<AiHelpAnswer | null>(null);
   const [servings, setServings] = useState(1);
   const [streakAtDone, setStreakAtDone] = useState(0);
+  // The real ordinal of THIS cook — server count when synced, else the
+  // local record count. Both are real completion records; never fabricated.
+  const [mealNumber, setMealNumber] = useState(1);
   // "I don't have this" — grounded substitution answer for the current step's
   // ingredients, sourced ONLY from the recipe's own substitution table and
   // the curated help library. No invented swaps, ever (Phase 14).
@@ -221,6 +228,10 @@ export default function CookingMode() {
     setStreakAtDone(
       computeStreak(useRuchi.getState().history, Date.now()),
     );
+    const s = useRuchi.getState();
+    setMealNumber(
+      s.cloudStats?.mealsCooked != null ? s.cloudStats.mealsCooked + 1 : s.history.length,
+    );
     track("delivery_saved_metric", { recipeId: recipe.id });
     track("meal_completed", {
       recipeId: recipe.id,
@@ -237,7 +248,9 @@ export default function CookingMode() {
   if (completed) {
     return (
       <CompletionView
+        recipe={recipe}
         recipeName={recipe.name}
+        mealNumber={mealNumber}
         protein={nutrition?.protein ?? 0}
         calories={nutrition?.calories ?? 0}
         cost={computeCost(recipe, 1)}
@@ -640,8 +653,15 @@ export default function CookingMode() {
 
 // ── Completion view ─────────────────────────────────────────
 
+// ── Completion view — "The Record" ──────────────────────────
+// A full-bleed dark stage, one light source, and the real meal
+// number as the hero. Every element enters in one quiet sequence;
+// prefers-reduced-motion gets the same composition, instantly.
+
 function CompletionView({
+  recipe,
   recipeName,
+  mealNumber,
   protein,
   calories,
   cost,
@@ -651,7 +671,9 @@ function CompletionView({
   onHome,
   onAgain,
 }: {
+  recipe: Recipe;
   recipeName: string;
+  mealNumber: number;
   protein: number;
   calories: number;
   cost: number;
@@ -662,77 +684,149 @@ function CompletionView({
   onAgain: () => void;
 }) {
   const reduceMotion = useReducedMotion();
-  const saved = Math.max(0, deliveryCost - cost);
-  const streakLine =
-    streakDays >= 2
-      ? `🔥 ${streakDays} days in a row. Keep it alive tomorrow.`
-      : streakDays === 1
-        ? "🔥 Day one. Cook again tomorrow to start a streak."
-        : null;
+  // Savings render ONLY when the comparison is defensible: a real catalog
+  // delivery price that actually beats the cooked cost. Otherwise silence.
+  const saved = defensibleSavings(cost, deliveryCost);
+  const showSavings = saved != null;
+  // A zero streak says nothing at all — never "0 day streak".
+  const streakLine = completionStreakLine(streakDays);
+
+  // One quiet entrance per layer — a poster, not an animation demo.
+  const enter = (delay: number) =>
+    reduceMotion
+      ? false
+      : {
+          initial: { opacity: 0, y: 14 },
+          animate: { opacity: 1, y: 0 },
+          transition: { duration: 0.55, ease: EASE, delay },
+        };
+
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-ink text-cream">
-      <div className="relative flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-ink text-cream">
+      {/* The stage: a single warm light behind the numeral, a soft floor
+          vignette. Depth from light, not from decoration. */}
+      <div aria-hidden className="pointer-events-none fixed inset-0">
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(58% 46% at 50% 40%, rgb(185 127 16 / 0.18), transparent 72%)",
+          }}
+        />
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(120% 90% at 50% 115%, transparent 52%, rgb(6 6 8 / 0.55))",
+          }}
+        />
+      </div>
+
+      <div className="relative flex min-h-full flex-col items-center justify-center px-6 py-12 text-center">
         {/* The one restrained celebratory moment — soft bloom, then quiet. */}
         <Celebration active />
-        <motion.div
-          initial={reduceMotion ? false : { scale: 0.6, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: "spring", damping: 14 }}
-          className="text-6xl"
-        >
-          🎉
-        </motion.div>
-        <h1 className="mt-6 font-display text-display-xl font-semibold">{MADE_IT_HEADLINE}</h1>
-        <p className="mt-2.5 font-display text-[19px] font-medium text-cream/90">{recipeName}</p>
-        <p className="mt-1.5 text-[14.5px] font-medium text-cream/60">
-          {protein}g protein · {calories} kcal
-        </p>
 
-        {/* The honest math — three estimate rows, saving highlighted */}
-        <div className="mt-8 w-full max-w-xs overflow-hidden rounded-3xl border border-cream/10 bg-cream/[0.07]">
-          <div className="flex items-center justify-between px-5 py-3.5">
-            <span className="text-[13.5px] text-cream/60">Estimated cost</span>
-            <span className="text-[15px] font-bold">₹{cost}</span>
-          </div>
-          <div className="flex items-center justify-between border-t border-cream/[0.07] px-5 py-3.5">
-            <span className="text-[13.5px] text-cream/60">Estimated delivery</span>
-            <span className="text-[15px] font-bold text-cream/70">₹{deliveryCost}</span>
-          </div>
-          <div className="flex items-center justify-between border-t border-cream/[0.07] bg-gold/10 px-5 py-3.5">
-            <span className="text-[13.5px] font-semibold text-gold-soft">Estimated saving</span>
-            <span className="font-display text-[22px] font-semibold text-gold-soft">₹{saved}</span>
-          </div>
-        </div>
-        <p className="mt-2.5 text-[12px] text-cream/45">Estimates, not invoices. But yours.</p>
+        {/* The dish — supporting cast, gently present. */}
+        <motion.div
+          initial={reduceMotion ? false : { scale: 0.7, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={reduceMotion ? undefined : { type: "spring", damping: 16, delay: 0.05 }}
+        >
+          <motion.div
+            animate={reduceMotion ? undefined : { y: [0, -6, 0] }}
+            transition={
+              reduceMotion ? undefined : { duration: 3.4, repeat: Infinity, ease: "easeInOut", delay: 1 }
+            }
+            className="rounded-full shadow-lifted ring-1 ring-cream/10"
+          >
+            <FoodVisual
+              recipe={recipe}
+              emojiClassName="text-5xl"
+              className="h-24 w-24 rounded-full"
+            />
+          </motion.div>
+        </motion.div>
 
         <motion.p
-          initial={reduceMotion ? false : { opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.35, duration: 0.4 }}
-          className="mt-6 whitespace-pre-line text-[15px] font-semibold leading-relaxed text-cream/90"
+          {...enter(0.15)}
+          className="mt-5 text-[12px] font-bold uppercase tracking-[0.28em] text-cream/50"
+        >
+          {MADE_IT_HEADLINE}
+        </motion.p>
+        <motion.p
+          {...enter(0.22)}
+          className="mt-2 font-display text-[26px] font-semibold leading-snug"
+        >
+          {recipeName}
+        </motion.p>
+        <motion.p {...enter(0.28)} className="mt-1 text-[14px] font-medium text-cream/55">
+          {protein}g protein · {calories} kcal
+        </motion.p>
+
+        {/* THE HERO — the real meal number. It is a record that actually
+            exists: server count when synced, else the real local count. */}
+        <motion.p
+          initial={
+            reduceMotion
+              ? false
+              : { opacity: 0, scale: 0.94, filter: "blur(12px)" }
+          }
+          animate={
+            reduceMotion
+              ? undefined
+              : { opacity: 1, scale: 1, filter: "blur(0px)" }
+          }
+          transition={reduceMotion ? undefined : { duration: 0.85, ease: EASE, delay: 0.34 }}
+          className="mt-4 bg-gradient-to-b from-cream via-cream to-gold-soft bg-clip-text font-display text-[104px] font-semibold leading-none tracking-tight text-transparent sm:text-[136px]"
+        >
+          {mealNumber}
+        </motion.p>
+        <motion.p {...enter(0.55)} className="mt-3 text-[14px] font-medium text-cream/60">
+          {mealNumberLine(mealNumber)}
+        </motion.p>
+
+        {/* The honest math — one line, only when the comparison is defensible. */}
+        {showSavings && (
+          <motion.p {...enter(0.62)} className="mt-6 text-[15px] font-semibold text-gold-soft">
+            ₹{saved} estimated saved.
+            <span className="ml-2 text-[12px] font-medium text-cream/40">
+              Estimates, not invoices.
+            </span>
+          </motion.p>
+        )}
+
+        <motion.p
+          {...enter(0.7)}
+          className="mt-6 max-w-xs whitespace-pre-line text-[15px] font-semibold leading-relaxed text-cream/90"
         >
           {DIDNT_ORDER_LINE}
         </motion.p>
 
         {streakLine && (
-          <p className="mt-4 text-[14px] font-semibold text-gold-soft">{streakLine}</p>
+          <motion.p {...enter(0.76)} className="mt-3 text-[14px] font-semibold text-gold-soft">
+            {streakLine}
+          </motion.p>
         )}
         {echo && (
-          <p className="mt-4 text-[14.5px] font-medium text-cream/70">{echo}</p>
+          <motion.p {...enter(0.8)} className="mt-3 text-[14.5px] font-medium text-cream/70">
+            {echo}
+          </motion.p>
         )}
 
-        <button
-          className="mt-8 w-full max-w-xs rounded-2xl bg-cream px-5 py-4 text-[15px] font-bold text-ink transition-colors hover:bg-white active:scale-[0.99]"
-          onClick={onAgain}
-        >
-          Cook this again
-        </button>
-        <button
-          onClick={onHome}
-          className="mt-3 w-full max-w-xs rounded-2xl py-3 text-[15px] font-semibold text-cream/70 transition-colors hover:text-cream"
-        >
-          Back to kitchen
-        </button>
+        <motion.div {...enter(0.88)} className="mt-9 w-full max-w-xs">
+          <button
+            className="w-full rounded-2xl bg-cream px-5 py-4 text-[15px] font-bold text-ink transition-colors hover:bg-white active:scale-[0.99]"
+            onClick={onAgain}
+          >
+            Ready for another one?
+          </button>
+          <button
+            onClick={onHome}
+            className="mt-3 w-full rounded-2xl py-3 text-[15px] font-semibold text-cream/70 transition-colors hover:text-cream"
+          >
+            Back to kitchen
+          </button>
+        </motion.div>
       </div>
     </div>
   );

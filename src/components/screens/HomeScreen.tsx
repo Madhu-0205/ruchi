@@ -433,7 +433,9 @@ export default function HomeScreen() {
         )}
       </section>
 
-      {/* ── Real cooking stats — the re-attention strip (server data only) ── */}
+      {/* ── Real cooking stats — the re-attention strip (server data only).
+          A metric renders only when a real value exists: no 0-streak,
+          no ₹0 saved, ever. ── */}
       {hasRealStats && (
         <div className="mt-12 border-y border-line py-6">
           <div className="flex items-center justify-around gap-6 text-center sm:justify-start sm:gap-14 sm:text-left">
@@ -445,22 +447,26 @@ export default function HomeScreen() {
                 meals cooked
               </p>
             </div>
-            <div>
-              <p className="font-display text-[30px] font-semibold leading-none text-flame-deep">
-                🔥 {cloudStats.currentStreak} day{cloudStats.currentStreak === 1 ? "" : "s"}
-              </p>
-              <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-                cooking streak
-              </p>
-            </div>
-            <div>
-              <p className="font-display text-[30px] font-semibold leading-none text-gold">
-                ₹{cloudStats.totalSaved.toLocaleString("en-IN")}
-              </p>
-              <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-                estimated saved
-              </p>
-            </div>
+            {cloudStats.currentStreak >= 1 && (
+              <div>
+                <p className="font-display text-[30px] font-semibold leading-none text-flame-deep">
+                  🔥 {cloudStats.currentStreak} day{cloudStats.currentStreak === 1 ? "" : "s"}
+                </p>
+                <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+                  cooking streak
+                </p>
+              </div>
+            )}
+            {cloudStats.totalSaved > 0 && (
+              <div>
+                <p className="font-display text-[30px] font-semibold leading-none text-gold">
+                  ₹{cloudStats.totalSaved.toLocaleString("en-IN")}
+                </p>
+                <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+                  estimated saved
+                </p>
+              </div>
+            )}
           </div>
           <p className="mt-4 text-[11.5px] text-muted">
             Counted from meals you actually finished, synced from your account.

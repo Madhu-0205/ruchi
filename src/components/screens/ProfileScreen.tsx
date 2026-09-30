@@ -213,14 +213,16 @@ export default function ProfileScreen() {
                 meals cooked
               </p>
             </div>
-            <div>
-              <p className="font-display text-[26px] font-semibold leading-none text-gold">
-                <NumberFlow value={week.saved} prefix="₹" />
-              </p>
-              <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-                saved (est.)
-              </p>
-            </div>
+            {week.saved > 0 && (
+              <div>
+                <p className="font-display text-[26px] font-semibold leading-none text-gold">
+                  <NumberFlow value={week.saved} prefix="₹" />
+                </p>
+                <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+                  saved (est.)
+                </p>
+              </div>
+            )}
             <div>
               <p className="font-display text-[26px] font-semibold leading-none text-sage">
                 <NumberFlow value={week.protein} suffix="g" />
@@ -230,17 +232,21 @@ export default function ProfileScreen() {
               </p>
             </div>
           </div>
-          <div className="mt-4 flex items-center gap-2 border-t border-line pt-3.5">
-            <Pill tone="time">🔥 {currentStreak} day streak</Pill>
-            <span className="text-[12px] text-muted">
-              {currentStreak >= 3
-                ? "You're doing this for real."
-                : "Cook tomorrow to grow the streak."}
-            </span>
-          </div>
-          <p className="mt-2.5 text-[12px] text-muted">
-            Savings estimated from ingredient costs vs typical delivery prices. Not a bank statement.
-          </p>
+          {currentStreak >= 1 && (
+            <div className="mt-4 flex items-center gap-2 border-t border-line pt-3.5">
+              <Pill tone="time">🔥 {currentStreak} day streak</Pill>
+              <span className="text-[12px] text-muted">
+                {currentStreak >= 3
+                  ? "You're doing this for real."
+                  : "Cook tomorrow to grow the streak."}
+              </span>
+            </div>
+          )}
+          {week.saved > 0 && (
+            <p className="mt-2.5 text-[12px] text-muted">
+              Savings estimated from ingredient costs vs typical delivery prices. Not a bank statement.
+            </p>
+          )}
         </Card>
       )}
 
@@ -368,7 +374,7 @@ export default function ProfileScreen() {
         <SectionTitle>Recent meals</SectionTitle>
         {history.length === 0 ? (
           <Card className="p-5">
-            <p className="text-[15px] font-semibold">Nothing cooked yet.</p>
+            <p className="text-[15px] font-semibold">Your first RUCHI meal will appear here.</p>
             <p className="mt-1 text-sm text-muted">
               The first one is the hardest. After that it&apos;s just dinner.
             </p>
@@ -651,6 +657,7 @@ function CookingStatsCard({
       >
         Cooking stats
       </SectionTitle>
+      {/* Metrics only when a real value exists — no ₹0 saved, no 0-day streak. */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div>
           <p className="font-display text-[26px] font-semibold leading-none">
@@ -660,30 +667,36 @@ function CookingStatsCard({
             meals cooked
           </p>
         </div>
-        <div>
-          <p className="font-display text-[26px] font-semibold leading-none text-flame-deep">
-            {stats.currentStreak}
-          </p>
-          <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-            current streak
-          </p>
-        </div>
-        <div>
-          <p className="font-display text-[26px] font-semibold leading-none text-ink">
-            {stats.longestStreak}
-          </p>
-          <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-            longest streak
-          </p>
-        </div>
-        <div>
-          <p className="font-display text-[26px] font-semibold leading-none text-gold">
-            ₹{stats.totalSaved}
-          </p>
-          <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-            saved (est.)
-          </p>
-        </div>
+        {stats.currentStreak >= 1 && (
+          <div>
+            <p className="font-display text-[26px] font-semibold leading-none text-flame-deep">
+              {stats.currentStreak}
+            </p>
+            <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+              current streak
+            </p>
+          </div>
+        )}
+        {stats.longestStreak >= 1 && (
+          <div>
+            <p className="font-display text-[26px] font-semibold leading-none text-ink">
+              {stats.longestStreak}
+            </p>
+            <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+              longest streak
+            </p>
+          </div>
+        )}
+        {stats.totalSaved > 0 && (
+          <div>
+            <p className="font-display text-[26px] font-semibold leading-none text-gold">
+              ₹{stats.totalSaved.toLocaleString("en-IN")}
+            </p>
+            <p className="mt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+              saved (est.)
+            </p>
+          </div>
+        )}
       </div>
       <p className="mt-4 border-t border-line pt-3.5 text-[12px] leading-relaxed text-muted">
         Counted from meals you actually finished while signed in — one per cook, even if the

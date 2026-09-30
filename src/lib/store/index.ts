@@ -706,6 +706,11 @@ export const useRuchi = create<RuchiState>()(
         lastNudges: s.lastNudges,
         lastCookedAt: s.lastCookedAt,
         localOwner: s.localOwner,
+        // Guest mode is a choice the user made — it must survive a reload,
+        // or a guest who cooked a meal gets thrown back to the welcome
+        // gate while their history sits right there in storage. signOut
+        // clears it explicitly, so signing out still lands on the gate.
+        guestMode: s.guestMode,
       }),
     },
   ),

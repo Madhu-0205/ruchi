@@ -95,6 +95,21 @@ the link is tapped twice — the fix is simply requesting a fresh link.
 - Gibberish search ("zzzqqq") → empty state with suggestions, never a blank
   screen
 
+## Notifications (opt-in, beta)
+
+- Opt in via the **Profile → notifications** toggle. The browser asks for
+  permission; a service worker (sw.js) receives pushes in the background.
+- What can arrive: a nudge when a planned meal goes uncooked for a few days,
+  a weekly recap, and milestone congratulations. Never marketing, and
+  nothing during quiet hours (10 pm–8 am) or while you're mid-cook.
+- Turning the toggle off stops future pushes immediately; you can re-enable
+  any time. No emails are sent — this is browser push only.
+- Deployment status: delivery is **dormant until the server-side push keys
+  are configured**. The toggle always works (permission is remembered), but
+  pushes only start once the VAPID env vars are set on the host and the
+  notification_send_log table exists in Supabase. If the toggle says
+  "unconfigured", that's why — the app stays fully usable either way.
+
 ## What to report
 
 Use **Profile → Beta feedback** (signed in) — pick a topic and describe what

@@ -12,10 +12,26 @@
 //
 // The server exposes the PUBLIC VAPID key at
 // GET /api/notifications/vapid-public — never a private key.
+//
+// The subscribe API authenticates with the session's Bearer token
+// (same posture as every other durable-data write): the route reuses
+// it to build an RLS-scoped client, so the subscription lands in the
+// caller's OWN notification_prefs row and nowhere else.
+
+import { getSupabase } from "@/lib/auth/supabase";
 
 export type SubscribeOutcome =
   | { ok: true; endpoint: string }
   | { ok: false; reason: "unsupported" | "denied" | "unconfigured" | "error" };
+
+/** The session's Authorization header, or {} when signed out. */
+async function authHeaders(): Promise<Record<string, string>> {
+  const supabase = getSupabase();
+  if (!supabase) return {};
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   const padding = "=".repeat((4 - (base64.length % 4)) % 4);
@@ -73,7 +89,7 @@ export async function enableWebPush(): Promise<SubscribeOutcome> {
 
     const save = await fetch("/api/notifications/subscribe", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
       body: JSON.stringify({ subscription: sub.toJSON() }),
     });
     if (!save.ok) return { ok: false, reason: "error" };
@@ -96,7 +112,10 @@ export async function disableWebPush(): Promise<SubscribeOutcome> {
       const sub = await reg?.pushManager.getSubscription();
       if (sub) await sub.unsubscribe().catch(() => undefined);
     }
-    const res = await fetch("/api/notifications/subscribe", { method: "DELETE" });
+    const res = await fetch("/api/notifications/subscribe", {
+      method: "DELETE",
+      headers: await authHeaders(),
+    });
     return res.ok ? { ok: true, endpoint: "" } : { ok: false, reason: "error" };
   } catch {
     return { ok: false, reason: "error" };

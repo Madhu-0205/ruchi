@@ -224,6 +224,7 @@ export type AnalyticsEventName =
   | "re_attention_recipe_selected"
   | "re_attention_cooking_started"
   | "re_attention_cooking_completed"
+  | "content_shown" // personality-engine line surfaced (rotation-quality signal)
   | "delivery_saved_metric"; // intended-delivery → cooked conversion metric
 
 export interface AnalyticsEvent {

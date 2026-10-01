@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { pickAndNote } from "@/lib/content";
 import { ArrowLeft,
   CircleHelp,
   Flame,
@@ -239,7 +240,20 @@ export default function CookingMode() {
       cost,
       saved: Math.max(0, recipe.deliveryCompare.cost - cost),
     });
-    setEchoLine(completionEcho(useRuchi.getState().history.length));
+    // Rotating completion voice: the engine picks deterministically for
+    // this session and cools the line down for later completions. Falls
+    // back to the static echo when the pool is context-excluded.
+    const echoPick = pickAndNote("completion", {
+      hour: new Date().getHours(),
+      isFirstTime: false,
+      hasHistory: true,
+      cookedRecently: true,
+      hasCookAgain: true,
+    });
+    setEchoLine(echoPick?.item.text ?? completionEcho(useRuchi.getState().history.length));
+    if (echoPick) {
+      track("content_shown", { surface: "completion_echo", item_id: echoPick.item.id, pool: echoPick.pool });
+    }
     setCompleted(true);
   };
 

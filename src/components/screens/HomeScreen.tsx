@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Camera, Search, Sparkles, X, Shuffle } from "lucide-react";
 import { Card, Chip, EmptyState, SectionHeading, SectionTitle, ShimmerSweep } from "@/components/ui";
 import { TextSwap, SpringButton, Reveal } from "@/components/motion";
 import { heroReveal } from "@/lib/motion";
+import { buildContentContext, pickAndNote, ingredientQuip, findMyMealRevealLine } from "@/lib/content";
 import { RuchiLogo } from "@/components/RuchiLogo";
 import { FoodVisual } from "@/components/FoodVisual";
 import { RecipeCard } from "@/components/RecipeCard";
@@ -167,7 +168,26 @@ export default function HomeScreen() {
   const shown = aiRecs ?? recs;
 
   const has = (id: string) => inventoryIds.includes(id);
-  const toggle = (id: string) => (has(id) ? removeItem(id) : addItem(id));
+  // Occasional ingredient voice: every ~3rd chip tap gets a one-word-to-
+  // one-line quip (deterministic rotation, per-ingredient cooldown). A
+  // ref clears it with the next interaction — a poster, not a ticker.
+  const [quip, setQuip] = useState<string | null>(null);
+  const tapCount = useRef(0);
+  const [revealLine, setRevealLine] = useState<string | null>(null);
+  const revealCount = useRef(0);
+  const toggle = (id: string) => {
+    tapCount.current += 1;
+    const q = ingredientQuip(id, tapCount.current);
+    if (q) {
+      setQuip(q);
+      track("content_shown", { surface: "ingredient_chip", item_id: id, pool: `ingredient:${id}` });
+    }
+    if (has(id)) {
+      removeItem(id);
+    } else {
+      addItem(id);
+    }
+  };
 
   const hasInventory = inventoryIds.length > 0;
   const isEmptyKitchen = inventoryIds.length === 0;
@@ -179,6 +199,11 @@ export default function HomeScreen() {
   const findMyMeal = () => {
     track("find_my_meal_clicked", { kitchen: inventoryIds.length, intents: intents.join(",") });
     track("recommendations_loaded", { count: recs.length });
+    // Anticipation line for the reveal — real kitchen size selects the
+    // energy (full vs sparse), rotation keeps repeat uses fresh.
+    revealCount.current += 1;
+    setRevealLine(findMyMealRevealLine(inventoryIds.length, revealCount.current));
+    track("content_shown", { surface: "find_my_meal_reveal" });
     setFindMyMealUsed(true);
     requestAnimationFrame(() => {
       document
@@ -208,6 +233,38 @@ export default function HomeScreen() {
     }))),
     [history],
   );
+
+  // ── Personality hero (rotation engine) ──────────────────────
+  // When the context engine is silent, a rotating greeting carries the
+  // hero and a contextual pool line supports it — first-time users get
+  // first-time lines, recent cooks get cook-again continuity, other
+  // returners get returning lines. Session memory + cooldowns keep
+  // repeat opens fresh without randomness; the pick is pinned per mount
+  // so the whole visit reads one consistent line.
+  const personalityHero = useMemo(() => {
+    const cctx = buildContentContext({
+      hour: new Date(NOW_MS).getHours(),
+      historyLength: history.length,
+      lastCookedAt: history[0]?.cookedAt,
+      now: NOW_MS,
+    });
+    const greeting = pickAndNote("greetings", cctx);
+    const support = cctx.isFirstTime
+      ? pickAndNote("firstTime", cctx)
+      : cctx.cookedRecently
+        ? pickAndNote("cookAgain", cctx)
+        : pickAndNote("returning", cctx);
+    // Rotation-quality analytics: which pools surfaced, for correlating
+    // content against real cooking completions later.
+    if (greeting) track("content_shown", { surface: "home_hero_greeting", item_id: greeting.item.id, pool: greeting.pool });
+    if (support) track("content_shown", { surface: `home_hero_${support.pool}`, item_id: support.item.id, pool: support.pool });
+    return {
+      headline: greeting?.item.text ?? null,
+      support: support?.item.text ?? null,
+    };
+    // Session-pinned: computed once per mount — never reshuffles mid-visit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Featured meal: the user's real top pick, or null when nothing is eligible ──
   const featured = shown[0] ?? null;
@@ -298,12 +355,14 @@ export default function HomeScreen() {
   // The context drives the hero when it has a real headline; the premium
   // defaults (homeHeadline) carry first-visit/empty states.
   const headline =
-    context.type === "none" || !context.headline
-      ? homeHeadline(inventoryIds.length, history.length)
-      : context.headline.replace(/\./g, ".\n").replace(/\n\n/g, "\n");
+    context.type !== "none" && context.headline
+      ? context.headline.replace(/\./g, ".\n").replace(/\n\n/g, "\n")
+      : personalityHero.headline ?? homeHeadline(inventoryIds.length, history.length);
   const supportLine = context.type !== "none" && context.supportingText
     ? context.supportingText
-    : returnVisitLine(inventoryIds.length, history.length) ?? homeSubLine(inventoryIds.length);
+    : personalityHero.support ??
+      returnVisitLine(inventoryIds.length, history.length) ??
+      homeSubLine(inventoryIds.length);
   const hasRealStats = !!cloudStats && cloudStats.mealsCooked > 0;
 
   // Context CTA — one tap from observation to cooking.
@@ -554,6 +613,11 @@ export default function HomeScreen() {
             {kitchenGoodLine(inventoryIds.length)}
           </p>
         )}
+        {quip && (
+          <p className="mb-3 text-[13.5px] font-medium text-flame" role="status">
+            {quip}
+          </p>
+        )}
 
         <AnimatePresence initial={false}>
           {showSearch && (
@@ -735,6 +799,11 @@ export default function HomeScreen() {
             eyebrow="From your kitchen"
             title={shown.length > 0 ? "Your best match" : "Nothing obvious yet"}
           />
+          {revealLine && (
+            <p className="mb-4 text-[14px] font-medium text-muted" role="status">
+              {revealLine}
+            </p>
+          )}
 
           {shown.length === 0 || !shown[0] ? (
             <EmptyState

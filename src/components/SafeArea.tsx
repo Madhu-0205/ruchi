@@ -25,6 +25,7 @@ import BottomNav from "@/components/BottomNav";
 import TopNav from "@/components/TopNav";
 import WelcomeGate from "@/components/WelcomeGate";
 import { PageTransition } from "@/components/motion";
+import { startContentSession } from "@/lib/content";
 
 /** Max ms the splash may hold before falling through to the real UI. */
 const SPLASH_CAP_MS = 4000;
@@ -55,6 +56,9 @@ export default function SafeArea({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     hydrate();
+    // One personality-engine session per app open: advances the rotation
+    // clock so returning visits see fresh (but deterministic) voice.
+    startContentSession();
   }, [hydrate]);
 
   // One render later than the SSR HTML — that single deferred render is

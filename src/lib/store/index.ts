@@ -113,12 +113,6 @@ interface RuchiState {
    */
   pendingConfirmationEmail: string | null;
   /**
-   * True once the user chose to continue without an account from the
-   * welcome screen. In-memory only — anonymous-first: the whole app
-   * works this way, the flag only controls the welcome gate.
-   */
-  guestMode: boolean;
-  /**
    * True once the initial session check has settled — signed in, signed
    * out, or Supabase unconfigured. Screens gate auth forms on this so a
    * late-restoring session never swaps a mounted form out from under
@@ -154,8 +148,6 @@ interface RuchiState {
   dismissRecovery: () => void;
   /** Dismiss the "check your email" confirmation notice. */
   dismissConfirmationNotice: () => void;
-  /** Enter the app without an account (anonymous-first). */
-  enterGuestMode: () => void;
   /** Detect + consume a recovery redirect once at startup. */
   consumeRecoveryRedirect: () => void;
   signOut: () => void;
@@ -333,7 +325,7 @@ async function syncMeals(get: () => RuchiState): Promise<void> {
  *   in their own account; unsynced-only local data is left behind).
  */
 /**
- * Land on Home after every auth transition (sign-in, guest entry, page
+ * Land on Home after every auth transition (sign-in, page
  * restore). The screen router is in-memory, so a stale "profile" or
  * "meal" position must never become the entry screen of a session that
  * just changed identity.
@@ -423,7 +415,6 @@ export const useRuchi = create<RuchiState>()(
       authReady: false,
       recoveryMode: false,
       pendingConfirmationEmail: null,
-      guestMode: false,
       localOwner: null,
 
       setName: (n) => {
@@ -657,11 +648,6 @@ export const useRuchi = create<RuchiState>()(
 
       dismissConfirmationNotice: () => set({ pendingConfirmationEmail: null }),
 
-      enterGuestMode: () => {
-        resetScreenToHome();
-        set({ guestMode: true });
-      },
-
       signOut: () => {
         const prev = get().account;
         void sbSignOut();
@@ -679,7 +665,6 @@ export const useRuchi = create<RuchiState>()(
           authError: null,
           recoveryMode: false,
           pendingConfirmationEmail: null,
-          guestMode: false,
           localOwner: prev ? `anon:${prev.id}` : null,
         });
       },
@@ -706,11 +691,6 @@ export const useRuchi = create<RuchiState>()(
         lastNudges: s.lastNudges,
         lastCookedAt: s.lastCookedAt,
         localOwner: s.localOwner,
-        // Guest mode is a choice the user made — it must survive a reload,
-        // or a guest who cooked a meal gets thrown back to the welcome
-        // gate while their history sits right there in storage. signOut
-        // clears it explicitly, so signing out still lands on the gate.
-        guestMode: s.guestMode,
       }),
     },
   ),
@@ -799,19 +779,17 @@ export type AuthFlowState =
   | "authenticated" // live Supabase session — show the RUCHI experience
   | "recovery" // arrived via a password-reset link — set a new password
   | "confirmation-required" // sign-up done; active after the email link
-  | "unauthenticated-guest" // chose to continue without an account
   | "unauthenticated"; // welcome + sign-in/sign-up (also: just signed out)
 
 export function deriveAuthFlowState(
   s: Pick<
     RuchiState,
-    "authReady" | "account" | "recoveryMode" | "pendingConfirmationEmail" | "guestMode"
+    "authReady" | "account" | "recoveryMode" | "pendingConfirmationEmail"
   >,
 ): AuthFlowState {
   if (s.recoveryMode) return "recovery";
   if (s.authReady && s.account) return "authenticated";
   if (s.authReady && s.pendingConfirmationEmail) return "confirmation-required";
-  if (s.authReady && s.guestMode) return "unauthenticated-guest";
   if (s.authReady) return "unauthenticated";
   return "initializing";
 }

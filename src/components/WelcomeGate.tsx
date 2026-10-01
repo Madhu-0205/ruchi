@@ -4,10 +4,11 @@
 // RUCHI — welcome gate (unauthenticated state)
 // ─────────────────────────────────────────────────────────────
 // Shown when the session check has settled and no Supabase session
-// exists (and the user hasn't chosen guest mode). States the product
-// promise in one line, then offers the auth form — with an honest
-// anonymous-first exit, because the whole app works without an
-// account. Rendered INSTEAD of the main app; no private UI mounts.
+// exists. States the product promise in one line, then offers the
+// auth form — sign in, sign up, or password reset. This is the
+// application's gate: the main app (with the user's data) mounts only
+// for authenticated users. Rendered INSTEAD of the main app; no
+// private UI mounts.
 
 import { Camera, Check } from "lucide-react";
 import AuthCard from "@/components/AuthCard";
@@ -18,7 +19,7 @@ import { getRecipe } from "@/lib/data/recipes";
 /** The gate's backdrop dish — a real recipe from the catalog. */
 const GATE_RECIPE_ID = "paneer-egg-bhurji";
 
-export default function WelcomeGate({ showGuestExit = true }: { showGuestExit?: boolean }) {
+export default function WelcomeGate() {
   const backdrop = getRecipe(GATE_RECIPE_ID);
 
   return (
@@ -76,11 +77,11 @@ export default function WelcomeGate({ showGuestExit = true }: { showGuestExit?: 
       </div>
 
       <div className="rounded-3xl border border-line bg-surface p-5 shadow-lifted sm:p-6">
-        <AuthCard showGuestExit={showGuestExit} />
+        <AuthCard />
       </div>
 
       <p className="mt-6 text-center text-[12px] leading-relaxed text-muted">
-        Your kitchen stays on this device unless you sign in to back it up.
+        Your kitchen backs up to your account — it follows you to any device.
       </p>
     </div>
   );

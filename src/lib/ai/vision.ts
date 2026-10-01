@@ -17,6 +17,7 @@
 
 import { findIngredient, INGREDIENTS } from "@/lib/data/ingredients";
 import { parseIngredientText } from "@/lib/engine/parse";
+import { getSupabase } from "@/lib/auth/supabase";
 import { logAiEvent } from "./observability";
 import type {
   IngredientVisionService,
@@ -48,11 +49,21 @@ export class GeminiIngredientVisionService implements IngredientVisionService {
       const body = new FormData();
       body.append("image", file, "ingredients.jpg");
 
+      // Server-side auth: the route verifies the caller's Supabase session
+      // before spending AI quota. Signed-out callers fail with 401 and the
+      // UI falls back to manual ingredient entry — honest, no fake analysis.
+      const token = (await getSupabase()?.auth.getSession())?.data.session?.access_token ?? null;
       const res = await fetch("/api/analyze-ingredients", {
         method: "POST",
         body,
+        ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
         signal: req.signal,
       });
+
+      if (res.status === 401) {
+        logAiEvent("fallback_triggered", { stage: "vision-auth-required" });
+        return null;
+      }
 
       const data = (await res.json().catch(() => null)) as AnalyzeResponse | null;
 

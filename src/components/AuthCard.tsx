@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────
 // RUCHI — shared auth card (sign in / sign up / forgot password)
 // ─────────────────────────────────────────────────────────────
-// One form, used by the welcome gate and the Profile screen's guest
+// One form, used by the welcome gate and the Profile screen's signed-out
 // view — the sign-in experience is identical wherever it appears.
 // Supabase is the only auth authority here: every outcome comes from
 // the store's Supabase-backed actions, errors are pre-classified into
@@ -30,7 +30,7 @@ const authErrorCopy: Record<AuthFailure, string> = {
   error: authErrorMessage("error"),
 };
 
-export default function AuthCard({ showGuestExit = false }: { showGuestExit?: boolean }) {
+export default function AuthCard() {
   const {
     authError,
     authReady,
@@ -38,7 +38,6 @@ export default function AuthCard({ showGuestExit = false }: { showGuestExit?: bo
     pendingConfirmationEmail,
     dismissConfirmationNotice,
     dismissRecovery,
-    enterGuestMode,
     signIn,
     signUp,
     requestPasswordReset,
@@ -241,21 +240,6 @@ export default function AuthCard({ showGuestExit = false }: { showGuestExit?: bo
         </form>
       )}
 
-      {showGuestExit && (
-        <button
-          type="button"
-          onClick={enterGuestMode}
-          className="mt-4 w-full rounded-2xl border border-sage/25 bg-sage-soft py-3 text-[13.5px] font-semibold text-sage transition-colors hover:bg-sage/15 hover:text-ink"
-        >
-          Continue without an account →
-        </button>
-      )}
-
-      {!showGuestExit && (
-        <p className="mt-2 text-center text-[11px] text-muted">
-          You can cook everything without an account. This just backs it up.
-        </p>
-      )}
     </div>
   );
 }

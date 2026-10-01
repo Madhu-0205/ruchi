@@ -187,7 +187,7 @@ export default function ProfileScreen() {
             </div>
           </div>
         ) : (
-          // Guest view: the shared auth card — identical to the welcome
+          // Signed-out view: the shared auth card — identical to the welcome
           // gate's form, so the sign-in experience never drifts between
           // the two places it appears.
           <AuthCard />
@@ -427,7 +427,7 @@ export default function ProfileScreen() {
       {/* Beta feedback (signed-in only) — minimal, append-only, no personal data */}
       {account && (
         <div className="mt-9">
-          <SectionTitle>Beta feedback</SectionTitle>
+          <SectionTitle>Feedback</SectionTitle>
           <Card className="p-5 sm:p-6">
             <p className="text-sm text-muted">
               Something off? A recipe, an instruction, a confusing screen — tell us
@@ -504,7 +504,6 @@ export default function ProfileScreen() {
 
 const NOTIF_CHANNELS: { id: NotificationChannel; label: string; hint: string; live: boolean }[] = [
   { id: "web_push", label: "Dinner nudges", hint: "When your kitchen has a real idea — rarely, never spam.", live: true },
-  { id: "email", label: "Email", hint: "Coming later.", live: false },
 ];
 
 function NotificationOptIn() {

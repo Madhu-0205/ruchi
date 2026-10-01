@@ -60,14 +60,13 @@ beforeEach(() => {
     authReady: false,
     recoveryMode: false,
     pendingConfirmationEmail: null,
-    guestMode: false,
     localOwner: null,
     history: [],
     name: "",
   });
 });
 
-describe("deriveAuthFlowState — the seven launch states", () => {
+describe("deriveAuthFlowState — the launch states", () => {
   it("app initializing / checking session → initializing", () => {
     expect(deriveAuthFlowState(state())).toBe("initializing");
   });
@@ -94,12 +93,7 @@ describe("deriveAuthFlowState — the seven launch states", () => {
     expect(deriveAuthFlowState(state())).toBe("confirmation-required");
   });
 
-  it("deliberate guest mode → unauthenticated-guest (anonymous-first preserved)", () => {
-    useRuchi.setState({ authReady: true, guestMode: true });
-    expect(deriveAuthFlowState(state())).toBe("unauthenticated-guest");
-  });
-
-  it("settled, no session, no guest choice → unauthenticated (welcome gate)", () => {
+  it("settled, no session → unauthenticated (welcome gate — the only pre-auth app state)", () => {
     useRuchi.setState({ authReady: true });
     expect(deriveAuthFlowState(state())).toBe("unauthenticated");
   });
@@ -119,7 +113,6 @@ describe("deriveAuthFlowState — the seven launch states", () => {
   it("no unauthenticated state can carry an account (data-leak invariant)", () => {
     for (const s of [
       { authReady: true, account: null as null },
-      { authReady: true, account: null as null, guestMode: true },
       { authReady: true, account: null as null, pendingConfirmationEmail: "x@y.z" },
       { authReady: false, account: null as null },
     ]) {
@@ -175,11 +168,9 @@ describe("confirmation lifecycle (store)", () => {
     expect(state().pendingConfirmationEmail).toBeNull();
   });
 
-  it("guest mode entry is a deliberate user action and survives navigation", () => {
-    useRuchi.setState({ authReady: true });
-    useRuchi.getState().enterGuestMode();
-    expect(deriveAuthFlowState(state())).toBe("unauthenticated-guest");
-    // Not persisted: a fresh load starts at initializing again.
-    expect(state().guestMode).toBe(true);
+  it("no guest path exists: the store exposes no guest action or flag", () => {
+    const s = state() as unknown as Record<string, unknown>;
+    expect("guestMode" in s).toBe(false);
+    expect("enterGuestMode" in s).toBe(false);
   });
 });

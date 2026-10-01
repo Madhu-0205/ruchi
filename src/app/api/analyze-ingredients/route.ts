@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
+import { authenticateRequest } from "@/lib/auth/api-auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -70,6 +71,15 @@ function errorResponse(status: number, message: string, code: string): NextRespo
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  // ── Authentication gate ───────────────────────────────
+  // Ingredient analysis costs real AI spend, so only verified signed-in
+  // users reach the model. The Bearer token is verified server-side
+  // against Supabase Auth; ownership/data isolation stays with RLS.
+  const auth = await authenticateRequest(req);
+  if (!auth.ok) {
+    return errorResponse(auth.status, "Sign in to analyze ingredients.", "unauthorized");
+  }
+
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     console.error("[analyze-ingredients] GEMINI_API_KEY is not configured");

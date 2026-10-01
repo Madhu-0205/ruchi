@@ -388,10 +388,10 @@ export default function HomeScreen() {
             </p>
           )}
 
-          {/* Social proof of simplicity — honest, no fabricated numbers */}
+          {/* Quiet confidence — the product's posture, no fabricated claims */}
           <p className="mt-6 hidden items-center gap-2 text-[13px] text-muted sm:flex">
             <Sparkles size={14} className="text-flame" />
-            No account needed. No clutter. Just dinner.
+            Your kitchen, understood. Dinner, decided.
           </p>
         </header>
 

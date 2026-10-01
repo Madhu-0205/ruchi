@@ -38,7 +38,6 @@ export default function SafeArea({ children }: { children: React.ReactNode }) {
   useRuchi((s) => s.account);
   useRuchi((s) => s.recoveryMode);
   useRuchi((s) => s.pendingConfirmationEmail);
-  useRuchi((s) => s.guestMode);
 
   // Hydration contract: the FIRST client render must match the server's
   // splash output exactly. The auth probe can settle before React's
@@ -109,8 +108,8 @@ export default function SafeArea({ children }: { children: React.ReactNode }) {
 
   // Welcome gate covers every pre-auth state: fresh visitor, just signed
   // out, recovery-link landing, and post-signup confirmation notice. The
-  // main app (with the user's data) mounts only for authenticated users
-  // and deliberate guest mode — no private UI can flash.
+  // main app (with the user's data) mounts ONLY for authenticated users —
+  // no private UI can flash, and the app mounts only behind a session.
   const gated =
     authFlow === "unauthenticated" ||
     authFlow === "recovery" ||
@@ -147,7 +146,7 @@ export default function SafeArea({ children }: { children: React.ReactNode }) {
         <AnimatePresence mode="wait" initial={false}>
           <PageTransition screenKey={screen}>
             {gated ? (
-              <WelcomeGate showGuestExit={authFlow === "unauthenticated"} />
+              <WelcomeGate />
             ) : (
               <>
                 {screen === "home" && <HomeScreen />}

@@ -267,3 +267,10 @@ async function processUser(
 
   return "delivered";
 }
+
+// Vercel Cron invokes cron endpoints via HTTP GET (docs/cron-jobs) — the
+// POST-only export made every scheduled run 405 before this line existed.
+// Both methods share THIS handler, so the CRON_SECRET Bearer gate, the
+// service-role client and all delivery/eligibility logic are identical
+// either way. POST stays for manual/ops invocation (curl verification).
+export const GET = POST;

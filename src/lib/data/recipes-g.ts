@@ -183,7 +183,9 @@ export const RECIPES_G: Recipe[] = [
         id: "s1",
         title: "Soak",
         text: "Rinse 200 g whole green moong and soak in hot water for 1 hour (or cold water for 4). Drain — reserve no soaking water.",
-        durationMin: 60,
+        // Active time only — the soak itself is passive prep-ahead (stated in
+        // text). Matches the dataset convention (chole, rajma, idli, dosa).
+        durationMin: 10,
         lookFor: "Moong swollen, splits easily when pressed.",
         helpIds: ["wash-dal"],
       },
@@ -323,7 +325,9 @@ export const RECIPES_G: Recipe[] = [
         id: "s1",
         title: "Soak",
         text: "Rinse and soak 200 g urad dal for 4 hours in cold water — or 2 hours in hot water when dinner can't wait. Drain completely.",
-        durationMin: 120,
+        // Active time only — the soak is passive prep-ahead (stated in text).
+        // A 120-min timer here would contradict the 45-min recipe promise.
+        durationMin: 10,
         lookFor: "Dal swells to double; a kernel crushes cleanly between fingers.",
         helpIds: ["wash-dal"],
       },

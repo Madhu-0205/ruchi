@@ -8,51 +8,11 @@ import { Reveal } from "@/components/motion";
 import { RecipeCard } from "@/components/RecipeCard";
 import { useScreen } from "@/lib/store/screens";
 import { useRuchi } from "@/lib/store";
-import { RECIPES } from "@/lib/data/recipes";
+import { discoverCategories, type DiscoverGroupId, type ResolvedCategory } from "@/lib/data/taxonomy";
 import { isAssumedPantry } from "@/lib/data/ingredients";
 import { computeCostPerServing, computeNutrition } from "@/lib/engine/nutrition";
 import { filterRecipes, searchRecipes, type RecipeFilters } from "@/lib/engine/search";
-import { dietTypeOf } from "@/lib/data/diet";
-import type { RecipeCategory } from "@/lib/types";
-
-type CollectionId =
-  | "high-protein"
-  | "under-100"
-  | "15-min"
-  | "breakfast"
-  | "lunch"
-  | "dinner"
-  | "beginner"
-  | "comfort"
-  | "healthy"
-  | "popular-veg"
-  | "south-indian-veg"
-  | "veg-budget"
-  | "popular-nonveg"
-  | "quick-chicken"
-  | "egg-favorites"
-  | "high-protein-nonveg"
-  | "nonveg-budget";
-
-const COLLECTIONS: { id: CollectionId; label: string; blurb: string }[] = [
-  { id: "high-protein", label: "High Protein", blurb: "20g+ per serving. Gains included." },
-  { id: "under-100", label: "Under ₹100", blurb: "Full meals that respect your wallet." },
-  { id: "15-min", label: "15-Minute Meals", blurb: "Faster than any delivery promise." },
-  { id: "breakfast", label: "Breakfast", blurb: "Start the day fed, not frantic." },
-  { id: "lunch", label: "Lunch", blurb: "The midday decision, already made." },
-  { id: "dinner", label: "Dinner", blurb: "Tonight's cooking, decided early." },
-  { id: "beginner", label: "Beginner Friendly", blurb: "Zero-cooking-experience safe." },
-  { id: "comfort", label: "Comfort Food", blurb: "The classics, done properly." },
-  { id: "healthy", label: "Healthy", blurb: "Balanced, not sad." },
-  { id: "popular-veg", label: "Popular Veg", blurb: "The vegetarian hits, from dosa to dal makhani." },
-  { id: "south-indian-veg", label: "South Indian Veg", blurb: "Idli's extended family. Fermented, steamed, wonderful." },
-  { id: "veg-budget", label: "Veg Under ₹35", blurb: "Vegetarian plates, tiny bill. Estimated cost." },
-  { id: "popular-nonveg", label: "Popular Non-Veg", blurb: "Biryani, butter chicken, and the rest of the hall of fame." },
-  { id: "quick-chicken", label: "Quick Chicken", blurb: "Chicken on the table in 30 minutes or less." },
-  { id: "egg-favorites", label: "Egg Favorites", blurb: "For the egg-first household." },
-  { id: "high-protein-nonveg", label: "High Protein Non-Veg", blurb: "20g+ protein, meat and egg editions." },
-  { id: "nonveg-budget", label: "Non-Veg Under ₹150", blurb: "Non-veg meals that don't feel like a splurge. Estimated cost." },
-];
+import type { Recipe } from "@/lib/types";
 
 const TIME_FILTERS = [
   { label: "Any", value: 0 },
@@ -71,8 +31,33 @@ const DIET_FILTERS = [
   { label: "Non-veg", value: "nonveg" as const },
 ];
 
+/**
+ * Per-serving card facts (1-serving Discover grid) — computed once per
+ * recipe per session instead of on every render of every card (collection
+ * switches, filter changes and search keystrokes used to redo this work
+ * for up to 163 recipes at a time).
+ */
+const cardFactsMemo = new Map<string, { protein: number; calories: number; cost: number }>();
+function cardFacts(r: Recipe) {
+  let f = cardFactsMemo.get(r.id);
+  if (!f) {
+    const n = computeNutrition(r, 1);
+    f = { protein: n.protein, calories: n.calories, cost: computeCostPerServing(r, 1) };
+    cardFactsMemo.set(r.id, f);
+  }
+  return f;
+}
+
+/** Group presentation order + the question each row answers. */
+const GROUP_META: { id: DiscoverGroupId; eyebrow: string }[] = [
+  { id: "mood", eyebrow: "What's your mood?" },
+  { id: "meal", eyebrow: "By meal" },
+  { id: "ingredient", eyebrow: "By ingredient" },
+  { id: "style", eyebrow: "By style" },
+];
+
 export default function DiscoverScreen() {
-  const [active, setActive] = useState<CollectionId>("high-protein");
+  const [active, setActive] = useState<string>("quick-easy");
   const [query, setQuery] = useState("");
   const [showFilters, setShowFilters] = useState(false);
   const [maxTime, setMaxTime] = useState(0);
@@ -82,67 +67,17 @@ export default function DiscoverScreen() {
   const inventory = useRuchi((s) => s.inventory);
   const inventoryIds = useMemo(() => inventory.map((i) => i.ingredientId), [inventory]);
 
+  // Resolve every category against the real catalog ONCE per mount —
+  // membership, counts and ordering are all deterministic (taxonomy.ts).
+  const categories = useMemo(() => discoverCategories(), []);
+  const activeCategory: ResolvedCategory =
+    categories.find((c) => c.id === active) ?? categories[0]!;
+
   // Defer search work so typing stays instant on mid-range phones.
   const deferredQuery = useDeferredValue(query);
   const searching = deferredQuery.trim().length > 0;
 
-  const collectionItems = useMemo(() => {
-    const cat: Partial<Record<CollectionId, RecipeCategory>> = {
-      breakfast: "breakfast",
-      lunch: "lunch",
-      dinner: "dinner",
-    };
-    return RECIPES.filter((r) => {
-      switch (active) {
-        case "high-protein":
-          return computeNutrition(r, 1).protein >= 20;
-        case "under-100":
-          return computeCostPerServing(r, 1) <= 100;
-        case "15-min":
-          return r.timeMin <= 15;
-        case "breakfast":
-        case "lunch":
-        case "dinner":
-          return r.category === cat[active];
-        case "beginner":
-          return r.difficulty === "easy";
-        case "comfort":
-          return r.tags.includes("comfort");
-        case "healthy":
-          return r.tags.includes("healthy");
-        case "popular-veg":
-          return r.diet === "veg";
-        case "south-indian-veg":
-          return (
-            r.diet === "veg" &&
-            ["South Indian", "Kerala", "Karnataka", "Tamil Nadu"].some((c) =>
-              r.cuisine.includes(c),
-            )
-          );
-        case "veg-budget":
-          return r.diet === "veg" && computeCostPerServing(r, 1) <= 35;
-        case "popular-nonveg":
-          return dietTypeOf(r) === "non_veg";
-        case "quick-chicken":
-          return (
-            r.diet === "nonveg" &&
-            r.ingredients.some((i) => i.ingredientId === "chicken-breast") &&
-            r.timeMin <= 30
-          );
-        case "egg-favorites":
-          return r.diet === "egg";
-        case "high-protein-nonveg":
-          return dietTypeOf(r) === "non_veg" && computeNutrition(r, 1).protein >= 20;
-        case "nonveg-budget":
-          return r.diet !== "veg" && computeCostPerServing(r, 1) <= 150;
-      }
-    });
-  }, [active]);
-
   const items = useMemo(() => {
-    const base = searching
-      ? searchRecipes(deferredQuery)
-      : collectionItems;
     // Structured filters apply on top of either source. The Diet chips use
     // the rich 3-way enum; the "Non-veg" chip maps to the binary dietType
     // (egg included) INSTEAD of the rich value — the rich "nonveg" value
@@ -150,14 +85,19 @@ export default function DiscoverScreen() {
     const rich = diet === "veg" || diet === "egg" ? diet : undefined;
     const binary =
       diet === "nonveg" ? "non_veg" : dietType && dietType !== "all" ? dietType : undefined;
-    return filterRecipes({
-      diet: rich,
-      dietType: binary,
-      maxTime,
-    } as RecipeFilters).filter((r) => base.includes(r));
-  }, [searching, deferredQuery, collectionItems, diet, dietType, maxTime]);
+    const structured = filterRecipes({ diet: rich, dietType: binary, maxTime });
+    if (searching) {
+      // Search keeps its own ranked order, narrowed to matching recipes.
+      const ranked = searchRecipes(deferredQuery);
+      const pool = new Set(structured);
+      return ranked.filter((r) => pool.has(r));
+    }
+    // Browsing keeps the category's curated order (protein-first on Egg,
+    // cheapest-first on Budget, …) — the structured chips only narrow it.
+    const allowed = new Set(structured);
+    return activeCategory.recipes.filter((r) => allowed.has(r));
+  }, [searching, deferredQuery, activeCategory, diet, dietType, maxTime]);
 
-  const col = COLLECTIONS.find((c) => c.id === active)!;
   const filtersActive = maxTime !== 0 || (diet && diet !== "all") || (dietType && dietType !== "all");
 
   return (
@@ -166,7 +106,7 @@ export default function DiscoverScreen() {
       <header className="mb-7 lg:mb-10">
         <h1 className="font-display text-display-xl font-semibold">Discover</h1>
         <p className="mt-2 max-w-lg text-[15.5px] leading-relaxed text-muted">
-          Curated lists, not a bottomless feed. That&apos;s the point.
+          Curated shelves, not a bottomless feed. That&apos;s the point.
         </p>
       </header>
 
@@ -252,47 +192,54 @@ export default function DiscoverScreen() {
         </div>
       )}
 
-      {/* Collections rail (hidden while searching) */}
+      {/* Category architecture — grouped, progressive, all backed by real
+          metadata (taxonomy.ts). Hidden while searching. */}
       {!searching && (
-        <>
-          <div className="no-scrollbar -mx-4 mb-3 flex gap-2 overflow-x-auto px-4 pb-1 lg:mx-0 lg:px-0">
-            {COLLECTIONS.map((c) => {
-              const isActive = active === c.id;
-              return (
-                <button
-                  key={c.id}
-                  onClick={() => setActive(c.id)}
-                  className={`relative shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition-colors duration-150 ${
-                    isActive ? "text-cream" : "border border-line bg-surface text-ink hover:border-line-strong hover:shadow-soft"
+        <div className="mb-8 space-y-5">
+          {GROUP_META.map(({ id, eyebrow }) => {
+            const groupCategories = categories.filter((c) => c.group === id);
+            if (groupCategories.length === 0) return null;
+            const isMood = id === "mood";
+            return (
+              <nav key={id} aria-label={eyebrow}>
+                <p
+                  className={`mb-2 font-semibold text-muted ${
+                    isMood
+                      ? "text-[13px] font-bold uppercase tracking-[0.14em]"
+                      : "text-[12px] font-bold uppercase tracking-[0.14em]"
                   }`}
                 >
-                  {isActive && (
-                    <motion.span
-                      layoutId="discover-pill"
-                      className="absolute inset-0 rounded-full bg-ink shadow-soft"
-                      transition={{ type: "spring", damping: 30, stiffness: 350 }}
+                  {eyebrow}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {groupCategories.map((c) => (
+                    <CategoryChip
+                      key={c.id}
+                      label={c.label}
+                      count={c.recipes.length}
+                      active={active === c.id}
+                      prominent={isMood}
+                      onClick={() => setActive(c.id)}
                     />
-                  )}
-                  <span className="relative">{c.label}</span>
-                </button>
-              );
-            })}
-          </div>
-          <p className="mb-7 text-[14px] text-muted">{col.blurb}</p>
-        </>
+                  ))}
+                </div>
+              </nav>
+            );
+          })}
+          <p className="border-t border-line pt-4 text-[14px] text-muted">{activeCategory.blurb}</p>
+        </div>
       )}
 
       <SectionTitle
         right={<span className="text-[12px] font-medium text-muted">{items.length} dishes</span>}
       >
-        {searching ? `Results for “${deferredQuery.trim()}”` : col.label}
+        {searching ? `Results for “${deferredQuery.trim()}”` : activeCategory.label}
       </SectionTitle>
 
       {/* Grid — editorial slow reveals, one-shot as cards scroll in */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {items.map((r, i) => {
-          const n = computeNutrition(r, 1);
-          const cost = computeCostPerServing(r, 1);
+          const { protein, calories, cost } = cardFacts(r);
           const missingCount = r.ingredients.filter(
             (ri) =>
               !ri.optional &&
@@ -303,8 +250,8 @@ export default function DiscoverScreen() {
             <Reveal key={r.id} delay={Math.min(i * 0.03, 0.2)}>
               <RecipeCard
                 recipe={r}
-                protein={n.protein}
-                calories={n.calories}
+                protein={protein}
+                calories={calories}
                 costPerServing={cost}
                 missingCount={missingCount}
                 canCookNow={missingCount === 0}
@@ -319,16 +266,53 @@ export default function DiscoverScreen() {
         <div className="mt-2">
           <EmptyState
             icon={<Search size={20} />}
-            title={searching ? `Nothing matches “${deferredQuery.trim()}”.` : "This list is empty right now."}
+            title={searching ? `Nothing matches “${deferredQuery.trim()}”.` : "This shelf is empty right now."}
             body={
               searching
                 ? "Try an ingredient — “egg”, “paneer” — or a word like “quick”."
-                : "Try another collection."
+                : "Try another category."
             }
           />
         </div>
       )}
     </div>
+  );
+}
+
+// ── Category chip — the shelf selector ──────────────────────
+function CategoryChip({
+  label,
+  count,
+  active,
+  prominent,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  prominent: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={active}
+      className={`relative shrink-0 rounded-full transition-colors duration-150 ${
+        prominent ? "px-4 py-2.5 text-[14px]" : "px-3.5 py-2 text-[13px]"
+      } font-semibold ${active ? "text-cream" : "border border-line bg-surface text-ink hover:border-line-strong hover:shadow-soft"}`}
+    >
+      {active && (
+        <motion.span
+          layoutId="discover-pill"
+          className="absolute inset-0 rounded-full bg-ink shadow-soft"
+          transition={{ type: "spring", damping: 30, stiffness: 350 }}
+        />
+      )}
+      <span className="relative">
+        {label}
+        <span className={`ml-1.5 ${active ? "text-cream/60" : "text-muted"}`}>{count}</span>
+      </span>
+    </button>
   );
 }
 

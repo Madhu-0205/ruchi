@@ -42,11 +42,22 @@ import type { Recipe, RecipeStep } from "@/lib/types";
 
 function useCountdown(minutes?: number) {
   const total = (minutes ?? 0) * 60;
-  // remaining initialized from the step length; remounts via key on step change
+  // remaining initialized from the step length
   const [remaining, setRemaining] = useState<number | null>(
     () => (minutes ? minutes * 60 : null),
   );
   const [running, setRunning] = useState(false);
+
+  // Step change → fresh timer. The hook lives across steps (it sits in the
+  // parent, so nothing remounts when the step advances) — without this sync
+  // the next step would inherit the PREVIOUS step's remaining time and lie
+  // about its own. React's adjust-state-when-props-change pattern.
+  const [prevMinutes, setPrevMinutes] = useState(minutes);
+  if (prevMinutes !== minutes) {
+    setPrevMinutes(minutes);
+    setRemaining(minutes ? minutes * 60 : null);
+    setRunning(false);
+  }
 
   useEffect(() => {
     if (!running) return;
@@ -150,6 +161,10 @@ export default function CookingMode() {
   const minutesLeft = steps
     .slice(stepIndex)
     .reduce((sum, s) => sum + (s.durationMin ?? 0), 0);
+
+  // The timer finished its run for THIS step — drives the sage "time's up"
+  // feedback and the Restart control. Resets naturally on step change.
+  const timerDone = countdown.remaining === 0 && countdown.total > 0;
 
   // Steps are written for 2 servings; scale quantity mentions for 1/3/4.
   const factor = servings / 2;
@@ -299,15 +314,16 @@ export default function CookingMode() {
           <ArrowLeft size={15} /> Exit
         </button>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-0.5 rounded-full bg-cream/10 p-1">
+          <div className="flex items-center gap-1.5 rounded-full bg-cream/10 p-1">
             {[1, 2, 4].map((n) => (
               <button
                 key={n}
                 onClick={() => setServings(n)}
-                className={`h-7 w-7 rounded-full text-[12px] font-bold transition-colors ${
+                className={`flex h-11 w-11 items-center justify-center rounded-full text-[13px] font-bold transition-colors ${
                   servings === n ? "bg-cream text-ink" : "text-cream/60 hover:text-cream"
                 }`}
                 aria-label={`Cooking for ${n}`}
+                aria-pressed={servings === n}
               >
                 {n}
               </button>
@@ -395,7 +411,7 @@ export default function CookingMode() {
                     ) : null}
                   </div>
 
-                  {/* Timer */}
+                  {/* Timer — the countdown is the tool, not a decoration */}
                   {step.durationMin ? (
                     <div className="mt-6 rounded-3xl border border-cream/10 bg-cream/[0.06] p-5">
                       <div className="flex items-center justify-between gap-4">
@@ -419,35 +435,62 @@ export default function CookingMode() {
                               }
                               size={76}
                               stroke={5}
+                              tone={timerDone ? "sage" : "flame"}
                             >
-                              <Timer size={16} className="text-flame" />
+                              <Timer size={16} className={timerDone ? "text-sage" : "text-flame"} />
                             </RingProgress>
                           </motion.div>
                           <div>
                             <p className="text-[12px] font-semibold uppercase tracking-wide text-cream/50">
-                              Suggested timer
+                              {timerDone ? "Time's up" : "Suggested timer"}
                             </p>
-                            <p className="font-display text-[32px] font-semibold tabular-nums leading-tight">
+                            <p
+                              className={`font-display text-[32px] font-semibold tabular-nums leading-tight ${
+                                timerDone ? "text-sage" : ""
+                              }`}
+                            >
                               {formatClock(countdown.remaining)}
                             </p>
                           </div>
                         </div>
-                        {countdown.running ? (
-                          <button
-                            onClick={countdown.pause}
-                            className="flex items-center gap-1.5 rounded-2xl bg-cream px-5 py-3 text-[14px] font-bold text-ink transition-colors hover:bg-white"
-                          >
-                            <Pause size={15} /> Pause
-                          </button>
-                        ) : (
-                          <button
-                            onClick={countdown.start}
-                            className="flex items-center gap-1.5 rounded-2xl bg-flame px-5 py-3 text-[14px] font-bold text-white shadow-cta transition-colors hover:bg-flame-deep"
-                          >
-                            <Play size={15} /> Start
-                          </button>
-                        )}
+                        <div className="flex flex-col items-end gap-2">
+                          {countdown.running ? (
+                            <button
+                              onClick={countdown.pause}
+                              className="flex items-center gap-1.5 rounded-2xl bg-cream px-5 py-3 text-[14px] font-bold text-ink transition-colors hover:bg-white"
+                            >
+                              <Pause size={15} /> Pause
+                            </button>
+                          ) : (
+                            <button
+                              onClick={countdown.start}
+                              className="flex items-center gap-1.5 rounded-2xl bg-flame px-5 py-3 text-[14px] font-bold text-white shadow-cta transition-colors hover:bg-flame-deep"
+                            >
+                              <Play size={15} /> {timerDone ? "Restart" : "Start"}
+                            </button>
+                          )}
+                          {/* Reset — only once the timer has actually been used,
+                              so it never reads as a mystery control. */}
+                          {(countdown.running ||
+                            (countdown.remaining !== null && countdown.remaining !== countdown.total)) && (
+                            <button
+                              onClick={countdown.reset}
+                              className="rounded-xl px-3 py-2 text-[12.5px] font-semibold text-cream/55 transition-colors hover:text-cream"
+                            >
+                              Reset
+                            </button>
+                          )}
+                        </div>
                       </div>
+                      {/* One quiet completion announcement — not a per-second ticker. */}
+                      <span role="status" className="sr-only">
+                        {timerDone ? "Timer finished. Check your pan." : ""}
+                      </span>
+                      {timerDone && (
+                        <p className="mt-3 text-[13.5px] font-semibold text-sage">
+                          Give it a look — the pan decides, not the clock.
+                        </p>
+                      )}
                     </div>
                   ) : null}
 
@@ -832,7 +875,7 @@ function CompletionView({
             className="w-full rounded-2xl bg-cream px-5 py-4 text-[15px] font-bold text-ink transition-colors hover:bg-white active:scale-[0.99]"
             onClick={onAgain}
           >
-            Ready for another one?
+            Cook it again
           </button>
           <button
             onClick={onHome}

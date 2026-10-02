@@ -68,6 +68,21 @@ describe("searchRecipes", () => {
     expect(dinner.every((r) => r.category === "dinner")).toBe(true);
   });
 
+  it("understands regional cuisine phrases ('south indian', 'north indian')", () => {
+    // A cuisine request must rank the actual regional shelf first — not the
+    // whole catalog weakly boosted by the word "indian".
+    const south = searchRecipes("south indian");
+    expect(south.length).toBeGreaterThan(0);
+    for (const r of south.slice(0, 5)) {
+      expect(/south|kerala|karnataka|tamil|andhra/i.test(r.cuisine)).toBe(true);
+    }
+    const north = searchRecipes("north indian");
+    expect(north.length).toBeGreaterThan(0);
+    for (const r of north.slice(0, 5)) {
+      expect(/north|punjabi|mughlai/i.test(r.cuisine)).toBe(true);
+    }
+  });
+
   it("returns nothing for gibberish instead of everything", () => {
     expect(searchRecipes("xyzzy-plugh")).toHaveLength(0);
   });

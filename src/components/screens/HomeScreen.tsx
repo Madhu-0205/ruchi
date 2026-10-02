@@ -270,18 +270,16 @@ export default function HomeScreen() {
   const featured = shown[0] ?? null;
 
   // ── Editorial sections from the real catalog (deterministic, no AI) ──
-  // Rail sections exclude drinks: the food rails read best as plated meals,
-  // and drinks surface in Discover's own collections.
+  // Two supporting sections only — Home's job is the decision, not browsing
+  // (spec §9: no card soup). The deeper shelves live in Discover's taxonomy
+  // (High Protein, Budget Friendly, etc.), so Home keeps one curated grid
+  // and one quick rail; drinks surface in Discover's Drinks shelf.
   const editorial = useMemo(() => {
     const food = RECIPES.filter((r) => r.category !== "drink");
-    const perServingCost = (r: (typeof RECIPES)[number]) => computeCostPerServing(r, 1);
     const protein = (r: (typeof RECIPES)[number]) => computeNutrition(r, 1).protein;
-    const byTime = [...food].sort((a, b) => a.timeMin - b.timeMin);
     return {
       good: [...food].sort((a, b) => protein(b) - protein(a)).slice(0, 6),
-      quick: byTime.slice(0, 8),
-      highProtein: [...food].sort((a, b) => protein(b) - protein(a)).slice(0, 8),
-      budget: [...food].sort((a, b) => perServingCost(a) - perServingCost(b)).slice(0, 8),
+      quick: [...food].sort((a, b) => a.timeMin - b.timeMin).slice(0, 8),
     };
   }, []);
 
@@ -1039,48 +1037,6 @@ export default function HomeScreen() {
         />
         <Rail>
           {editorial.quick.map((r) => (
-            <RailItem key={r.id}>
-              <RecipeCard
-                recipe={r}
-                layout="vertical"
-                protein={computeNutrition(r, 1).protein}
-                calories={computeNutrition(r, 1).calories}
-                costPerServing={computeCostPerServing(r, 1)}
-                missingCount={0}
-                canCookNow={false}
-                onClick={() => go("meal", { recipeId: r.id })}
-              />
-            </RailItem>
-          ))}
-        </Rail>
-      </section>
-
-      {/* ── High-protein meals ───────────────────────────── */}
-      <section className="mt-14">
-        <SectionHeading eyebrow="20g+ per serving" title="High-protein meals" />
-        <Rail>
-          {editorial.highProtein.map((r) => (
-            <RailItem key={r.id}>
-              <RecipeCard
-                recipe={r}
-                layout="vertical"
-                protein={computeNutrition(r, 1).protein}
-                calories={computeNutrition(r, 1).calories}
-                costPerServing={computeCostPerServing(r, 1)}
-                missingCount={0}
-                canCookNow={false}
-                onClick={() => go("meal", { recipeId: r.id })}
-              />
-            </RailItem>
-          ))}
-        </Rail>
-      </section>
-
-      {/* ── Budget-friendly meals ────────────────────────── */}
-      <section className="mt-14">
-        <SectionHeading eyebrow="Full plates, small bill" title="Budget-friendly meals" />
-        <Rail>
-          {editorial.budget.map((r) => (
             <RailItem key={r.id}>
               <RecipeCard
                 recipe={r}

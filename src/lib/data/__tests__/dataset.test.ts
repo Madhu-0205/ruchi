@@ -157,6 +157,20 @@ describe("recipe dataset", () => {
     }
   });
 
+  it("no single step takes longer than the whole recipe", () => {
+    // A step whose timer exceeds the recipe's total time promise breaks the
+    // Cooking Mode "minutes to dinner" estimate — this is how passive soaks
+    // (which belong in text, not durationMin) get caught.
+    for (const r of RECIPES) {
+      for (const s of r.steps) {
+        expect(
+          s.durationMin ?? 0,
+          `${r.id}/${s.id} ("${s.title}") durationMin exceeds the recipe's ${r.timeMin}-min promise`,
+        ).toBeLessThanOrEqual(r.timeMin);
+      }
+    }
+  });
+
   it("pressure-cooker steps carry a steam-release safety note", () => {
     for (const r of RECIPES) {
       for (const s of r.steps) {

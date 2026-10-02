@@ -315,12 +315,15 @@ export function RingProgress({
   progress,
   size = 120,
   stroke = 6,
+  tone = "flame",
   children,
 }: {
   /** 0 → 1 remaining fraction. */
   progress: number;
   size?: number;
   stroke?: number;
+  /** Ring color — flame while running, sage when the timer completes. */
+  tone?: "flame" | "sage";
   children?: ReactNode;
 }) {
   const r = (size - stroke) / 2;
@@ -345,7 +348,7 @@ export function RingProgress({
           cy={size / 2}
           r={r}
           fill="none"
-          stroke="var(--color-flame)"
+          stroke={tone === "sage" ? "var(--color-sage)" : "var(--color-flame)"}
           strokeWidth={stroke}
           strokeLinecap="round"
           strokeDasharray={c}

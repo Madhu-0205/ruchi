@@ -101,6 +101,11 @@ export function searchRecipes(query: string): Recipe[] {
   // "non veg", "nonveg", "non-veg" — the binary filter (egg included).
   const wantsNonVeg = /\bnon[\s-]?veg\b|\bnonveg\b/.test(q);
   const wantsEasy = /\b(easy|beginner|simple)\b/.test(q);
+  // Regional phrases — a real cuisine request, not a word coincidence.
+  // Without these, "south indian" ranked the whole catalog by the weak
+  // per-word cuisine boost instead of the actual South Indian shelf.
+  const wantsSouthIndian = /\bsouth[\s-]?indian\b/.test(q);
+  const wantsNorthIndian = /\bnorth[\s-]?indian\b/.test(q);
 
   // Remaining words after removing known structural tokens.
   const structural = new Set(
@@ -180,6 +185,8 @@ export function searchRecipes(query: string): Recipe[] {
     if (wantsVeg && r.diet === "veg") score += 12;
     if (wantsNonVeg && dietTypeOf(r) === "non_veg") score += 12;
     if (wantsEasy && r.difficulty === "easy") score += 10;
+    if (wantsSouthIndian && /south|kerala|karnataka|tamil|andhra/i.test(r.cuisine)) score += 30;
+    if (wantsNorthIndian && /north|punjabi|mughlai/i.test(r.cuisine)) score += 30;
 
     return { r, score };
   })

@@ -20,6 +20,7 @@ import type {
   BudgetPerMeal,
   DietPreference,
   FitnessGoal,
+  NotificationOpportunityType,
   NudgeKind,
   People,
   SkillLevel,
@@ -599,11 +600,80 @@ function NotificationOptIn() {
           {pushNote}
         </p>
       )}
+      <div className="mt-4">
+        <NotificationOpportunityToggles />
+      </div>
       <p className="mt-4 border-t border-line pt-3 text-[12px] leading-relaxed text-muted">
         Off by default. If you turn these on, RUCHI will only reach out when it has
         something genuinely useful — and a quiet-hours limit always applies.
       </p>
     </Card>
+  );
+}
+
+// ── Notification Opportunity Toggles (spec §13) ───────────────
+// A compact per-type controller inside the existing Notifications card.
+// Everything sensible is grouped around the user's real preferences;
+// the master switch is the only global.
+
+const OPPORTUNITY_TYPES: {
+  type: NotificationOpportunityType;
+  label: string;
+  hint: string;
+  group: string;
+}[] = [
+  { type: "resume_cooking", label: "Cooking reminders", hint: "Wake me if I pause a dish mid-cook.", group: "calendar" },
+  { type: "explicit_followup", label: "Follow-ups", hint: "From things I did in the app straight away.", group: "interactive" },
+  { type: "ingredient_opportunity", label: "Meal ideas from my kitchen", hint: "Sent only from the real ingredients on my counters.", group: "kitchen" },
+  { type: "cook_again", label: "Cook again", hint: "Round two on the dishes I already made.", group: "kitchen" },
+  { type: "contextual_meal", label: "Meal timing", hint: "Based on when I actually cook, never habits.", group: "calendar" },
+  { type: "discover_opportunity", label: "New ideas", hint: "Real Discover categories, one per week.", group: "exploration" },
+  { type: "personality", label: "A little personality", hint: "Very occasional — will not dominate.", group: "tone" },
+];
+
+function NotificationOpportunityToggles() {
+  const prefs = useRuchi((s) => s.notificationTypePrefs);
+  const setType = useRuchi((s) => s.setNotificationType);
+  const account = useRuchi((s) => s.account);
+
+  return (
+    <div className="mt-4 border-t border-line pt-4">
+      <div className="flex items-center justify-between gap-4">
+        <SectionTitle right={
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted">optional</span>
+        }>
+          What RUCHI may nudge you about
+        </SectionTitle>
+        <span className="text-[12px] text-muted">
+          Defaults ON for the useful ones; personality is off by default.
+        </span>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {OPPORTUNITY_TYPES.map(({ type, label, hint }) => {
+          const on = prefs[type] !== false; // absent = default ON
+          return (
+            <button key={type} type="button"
+              onClick={() => { if (account) setType(type, !on); }}
+              aria-pressed={on}
+              aria-label={`Toggle ${label}`}
+              className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left transition-all ${`${on ? "border-sage bg-sage/5" : "border-line bg-surface"}`}`}>
+              <div className="min-w-0">
+                <p className="text-[14px] font-semibold truncate">{label}</p>
+                <p className="mt-0.5 text-[12px] text-muted">{hint}</p>
+              </div>
+              <span className={`relative h-8 w-14 shrink-0 rounded-full transition-colors duration-200 ${on ? "bg-sage" : "bg-line-strong"}`}>
+                <span aria-hidden
+                  className={`absolute top-1 h-6 w-6 rounded-full bg-white shadow-soft transition-all duration-200 ${on ? "left-7" : "left-1"}`} />
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-3 text-[12px] leading-relaxed text-muted">
+        Nothing here is a guilt trip. If RUCHI reaches out, it has to be
+        worth your time — and it will always respect your quiet hours.
+      </p>
+    </div>
   );
 }
 

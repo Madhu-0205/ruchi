@@ -16,6 +16,15 @@ export type DietTag = "veg" | "egg" | "nonveg";
  */
 export type DietType = "veg" | "non_veg";
 
+export type NotificationOpportunityType =
+  | "resume_cooking"
+  | "explicit_followup"
+  | "ingredient_opportunity"
+  | "cook_again"
+  | "contextual_meal"
+  | "discover_opportunity"
+  | "personality";
+
 export type Unit =
   | "count"
   | "g"
@@ -216,6 +225,10 @@ export type AnalyticsEventName =
   | "recipe_help_requested"
   | "meal_shared"
   | "notification_opened"
+  | "notification_suppressed"
+  | "notification_sent"
+  | "notification_failed"
+  | "notification_actioned"
   | "re_attention_generated"
   | "re_attention_shown"
   | "re_attention_clicked"

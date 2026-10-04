@@ -10,7 +10,7 @@
 // first settled state (never again during internal navigation), with a
 // safety cap so a hung network can never trap the user on the splash.
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { AnimatePresence } from "framer-motion";
 import { deriveAuthFlowState, useRuchi } from "@/lib/store";
 import { useScreen } from "@/lib/store/screens";
@@ -26,6 +26,7 @@ import TopNav from "@/components/TopNav";
 import WelcomeGate from "@/components/WelcomeGate";
 import { PageTransition } from "@/components/motion";
 import { startContentSession } from "@/lib/content";
+import { applyDeepLink } from "@/lib/notifications/deep-link";
 
 /** Max ms the splash may hold before falling through to the real UI. */
 const SPLASH_CAP_MS = 4000;
@@ -33,6 +34,11 @@ const SPLASH_CAP_MS = 4000;
 export default function SafeArea({ children }: { children: React.ReactNode }) {
   const screen = useScreen((s) => s.screen);
   const hydrate = useScreen((s) => s.hydrate);
+
+  // NOTE: deep-link params are read ONCE, by their consumers (Discover
+  // reads ?category, applyDeepLink reads everything). Nothing here may
+  // peek at them — a read consumes the param and the target screen
+  // would never see the notification's promise.
 
   // Subscribe to the flags the auth state machine derives from.
   useRuchi((s) => s.authReady);
@@ -72,10 +78,23 @@ export default function SafeArea({ children }: { children: React.ReactNode }) {
   // (offline, very slow network), the splash can never trap the user —
   // the auth card's own authReady skeletons take over as the honest
   // loading state.
+  const applyDeepLinkOnce = useCallback(() => {
+    applyDeepLink();
+  }, []);
+
   useEffect(() => {
     const t = setTimeout(() => setCapFired(true), SPLASH_CAP_MS);
     return () => clearTimeout(t);
   }, []);
+
+  // Deep-link bridge: read the URL once, route to the right screen,
+  // and record the notification as opened. Runs only after auth settles
+  // and the cap has fired, so the real UI surfaces first.
+  useEffect(() => {
+    if (authFlow === "authenticated" || authFlow === "recovery") {
+      applyDeepLinkOnce();
+    }
+  }, [authFlow, applyDeepLinkOnce]);
 
   // The splash is DERIVED, not toggled: visible only while the session
   // check is unsettled AND the cap hasn't fired. It can never reappear —

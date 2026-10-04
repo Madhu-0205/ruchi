@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "verify:db": "bash supabase/tests/verify-local.sh",
+    "verify:ledger": "bash supabase/tests/verify-0006.sh",
     "verify:e2e": "node supabase/tests/e2e-sim.mjs"
   },
   "dependencies": {

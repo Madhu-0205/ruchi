@@ -29,6 +29,7 @@ import type {
   MealHistoryEntry,
   NudgeEvent,
   NudgeKind,
+  NotificationOpportunityType,
   UserPreferences,
 } from "@/lib/types";
 import { track } from "@/lib/engine/analytics";
@@ -53,6 +54,8 @@ import {
   fetchNotificationPrefs,
   pushAttentionState,
   upsertNotificationChannels,
+  pushPausedSession,
+  upsertNotificationTypePrefs,
   type NotificationChannel,
   fetchProfile,
   insertCompletedMeals,
@@ -61,7 +64,7 @@ import {
   upsertProfile,
   type CookingStatsRow,
 } from "@/lib/auth/supabase-data";
-
+import { markNotificationEngaged } from "@/lib/auth/supabase-data";
 export { dayKeyOf };
 
 const DEFAULT_PREFS: UserPreferences = {
@@ -75,12 +78,7 @@ const DEFAULT_PREFS: UserPreferences = {
   equipment: ["stove", "pan", "pot"],
 };
 
-/**
- * Whose data currently lives in localStorage. `null` = fresh device or
- * nothing cooked yet. `anon:<userId>` = that user cooked here while
- * signed out (their data — safe to merge when they sign back in).
- * `<userId>` = signed in as that user.
- */
+/** Whose data currently lives in localStorage. `null` = fresh device or nothing cooked yet. */
 type LocalOwner = string | null;
 
 interface RuchiState {
@@ -96,30 +94,13 @@ interface RuchiState {
   account: AccountUser | null;
   /** Quiet sync indicator for Profile: last successful mirror time. */
   cloudSyncAt?: number;
-  /** True when the last cloud write/read failed — Profile shows a gentle note. */
+  /** True when the last cloud write/read failed. */
   syncError: boolean;
   /** Auth failure kind for honest, non-technical error copy. */
   authError: AuthFailure | null;
-  /**
-   * True while the user is inside a password-recovery session (arrived
-   * via a reset email link). In-memory only — never persisted, and
-   * cleared on sign-out or once a new password is set.
-   */
   recoveryMode: boolean;
-  /**
-   * Email awaiting confirmation after sign-up (when the project has
-   * email confirmation enabled). In-memory only: a fresh page load has
-   * no pending sign-up, so the state is honest by construction.
-   */
   pendingConfirmationEmail: string | null;
-  /**
-   * True once the initial session check has settled — signed in, signed
-   * out, or Supabase unconfigured. Screens gate auth forms on this so a
-   * late-restoring session never swaps a mounted form out from under
-   * the user's typing. In-memory only: every page load re-checks.
-   */
   authReady: boolean;
-  /** Whose data currently lives in localStorage (see LocalOwner doc). */
   localOwner: LocalOwner;
 
   setName: (n: string) => void;
@@ -138,67 +119,39 @@ interface RuchiState {
     email: string,
     password: string,
   ) => Promise<"signed-in" | "needs-email-confirmation" | "failed">;
-  /** Ask Supabase to email a reset link. "sent" = request accepted. */
-  requestPasswordReset: (
-    email: string,
-  ) => Promise<"sent" | "failed">;
-  /** Apply the new password inside a recovery session. */
+  requestPasswordReset: (email: string) => Promise<"sent" | "failed">;
   setNewPassword: (newPassword: string) => Promise<"updated" | "failed">;
-  /** Leave the set-new-password card without saving (back to sign-in). */
   dismissRecovery: () => void;
-  /** Dismiss the "check your email" confirmation notice. */
   dismissConfirmationNotice: () => void;
-  /** Detect + consume a recovery redirect once at startup. */
   consumeRecoveryRedirect: () => void;
   signOut: () => void;
-  /** Retry any pending cloud mirror (also used by "Back up now"). */
   syncNow: () => void;
-  /**
-   * Begin a cooking session: ensures a fresh per-session idempotency
-   * token exists. Safe to call repeatedly (StrictMode double-mounts
-   * keep the same token); the token is consumed when its completion is
-   * recorded server-side.
-   */
+
   beginCookingSession: () => void;
-  /** Server-derived cooking stats (null until first successful sync). */
   cloudStats: CookingStatsRow | null;
-  /** Recent cooked meals from the server completions log (newest first). */
   recentCooked: MealHistoryEntry[];
-  /**
-   * Re-attention suppression state — when a context was last shown (and
-   * which one), plus a global mute window after a dismissal. Persisted
-   * with the profile so frequency control survives refreshes; NOT the
-   * source of truth for anything the user sees as "their data".
-   */
-  attention: { lastShown: { type: import("@/lib/context/attention").AttentionType; recipeId?: string; at: number } | null; suppressionUntil: number | null };
-  /** The user paused mid-cook: recipe + step, for a real Resume context. */
+  attention: {
+    lastShown: { type: import("@/lib/context/attention").AttentionType; recipeId?: string; at: number } | null;
+    suppressionUntil: number | null;
+  };
   pausedCooking: { recipeId: string; stepIndex: number; stepCount: number; pausedAt: number } | null;
   /** Notification opt-in flags (server-backed; defaults OFF). */
   notificationChannels: Partial<Record<NotificationChannel, boolean>>;
-  /** Toggle one notification channel (opt-in is always explicit). */
+  notificationTypePrefs: Partial<Record<NotificationOpportunityType, boolean>>;
+  setNotificationType: (type: NotificationOpportunityType, enabled: boolean) => void;
+  markNotificationOpened: (ledgerId: string) => void;
+  markNotificationActioned: (ledgerId: string) => void;
   setNotificationChannel: (channel: NotificationChannel, enabled: boolean) => void;
   /** Record that a re-attention context was shown (drives cooldowns). */
   markAttentionShown: (type: import("@/lib/context/attention").AttentionType, recipeId?: string) => void;
   /** User dismissed a re-attention moment — mute everything briefly. */
   dismissAttention: () => void;
-  /** Called when the user exits cooking mid-recipe (real paused session). */
   pauseCookingSession: (recipeId: string, stepIndex: number, stepCount: number) => void;
-  /** Cleared on resume or completion — never faked. */
   clearPausedCooking: () => void;
-  /** Per-cooking-session idempotency token (in-memory only, not persisted). */
   cookingSessionToken: string | null;
-  /** Set by tests; real callers use the crypto.randomUUID default. */
   _makeSessionToken: () => string;
 }
 
-// ── Cooking-session idempotency ──────────────────────────────
-// Each cooking session (one run through Cooking Mode) gets ONE opaque
-// token, generated when the session begins. Every completion write for
-// that session — however many times the completion action fires —
-// carries the SAME token, and the server deduplicates on it. A duplicate
-// returns 'duplicate' and writes nothing; the client keeps its local
-// celebration regardless. The token is consumed once the server records
-// it, so the next session starts fresh.
 let sessionTokenOverride: string | null = null;
 
 function makeSessionToken(): string {
@@ -206,11 +159,9 @@ function makeSessionToken(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
   }
-  // Older browsers: timestamp + entropy is sufficient for a per-session id.
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** Test seam: pin the session token so idempotency is deterministically assertable. */
 export function setSessionTokenForTests(token: string | null): void {
   sessionTokenOverride = token;
 }
@@ -219,12 +170,9 @@ function makeId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** Meals are deduped by recipe + local calendar day, in both directions. */
 function mealKey(e: Pick<MealHistoryEntry, "recipeId" | "cookedAt">): string {
   return `${e.recipeId}|${dayKeyOf(e.cookedAt)}`;
 }
-
-// ── Cloud sync helpers (module scope: debounce across actions) ──
 
 let profileTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -241,12 +189,6 @@ function scheduleProfilePush(get: () => RuchiState) {
   }, 1200);
 }
 
-/**
- * Mirror local meals → cloud and pull cloud meals → local, deduped by
- * (recipeId, day). Anonymous progress migrates exactly once; nothing is
- * ever deleted on either side. Streak RPC fires for newly pushed days
- * (idempotent per day server-side).
- */
 async function syncMeals(get: () => RuchiState): Promise<void> {
   const s = get();
   if (!s.account) return;
@@ -259,7 +201,6 @@ async function syncMeals(get: () => RuchiState): Promise<void> {
   const remoteKeys = new Set(remoteEntries.map(mealKey));
   const localKeys = new Set(s.history.map(mealKey));
 
-  // 1) Local meals the cloud hasn't seen → insert (migration / retry).
   const missingRemotely = s.history.filter((e) => !remoteKeys.has(mealKey(e)));
   let pushedDays: string[] = [];
   if (missingRemotely.length > 0) {
@@ -271,12 +212,10 @@ async function syncMeals(get: () => RuchiState): Promise<void> {
     pushedDays = [...new Set(missingRemotely.map((e) => dayKeyOf(e.cookedAt)))];
   }
 
-  // 2) Cloud meals this device hasn't seen → fill in locally (new device).
   const freshLocally = remoteEntries.filter((e) => !localKeys.has(mealKey(e)));
 
   if (pushedDays.length > 0) {
     for (const day of pushedDays) {
-      // p_local_date is "YYYY-MM-DD" — RPC is idempotent per day.
       const [y, m, d] = day.split("-").map(Number) as [number, number, number];
       const dayMs = new Date(y, m - 1, d, 21).getTime();
       const r = await recordStreakDay(dayMs);
@@ -299,8 +238,6 @@ async function syncMeals(get: () => RuchiState): Promise<void> {
 
   useRuchi.setState({ cloudSyncAt: Date.now(), syncError: false });
 
-  // Real Cooking Stats: refresh the server-derived aggregates after every
-  // sync so Profile always shows numbers computed from the records.
   const [stats, recent, notifPrefs] = await Promise.all([
     fetchCookingStats(),
     fetchRecentCookedMeals(8),
@@ -314,22 +251,6 @@ async function syncMeals(get: () => RuchiState): Promise<void> {
   if (!stats.ok) useRuchi.setState({ syncError: true });
 }
 
-/**
- * Sign-in reconciliation. Ownership rules (documented behavior):
- * - localOwner === user.id or `anon:<user.id>` → this device holds that
- *   user's own (possibly anonymous) data → merge into their account.
- * - localOwner === null → fresh/nothing cooked → just pull their cloud.
- * - localOwner belongs to a DIFFERENT user → shared-device case: do NOT
- *   push this device's data into the new account; replace local state
- *   with their cloud data instead (previous user's synced data is safe
- *   in their own account; unsynced-only local data is left behind).
- */
-/**
- * Land on Home after every auth transition (sign-in, page
- * restore). The screen router is in-memory, so a stale "profile" or
- * "meal" position must never become the entry screen of a session that
- * just changed identity.
- */
 function resetScreenToHome(): void {
   useScreen.setState({ screen: "home", recipeId: undefined, cameFrom: undefined, history: [] });
 }
@@ -337,12 +258,9 @@ function resetScreenToHome(): void {
 async function handleSignedIn(user: AccountUser, localOwner: LocalOwner): Promise<void> {
   const ownsLocal = localOwner === null || localOwner === user.id || localOwner === `anon:${user.id}`;
 
-  // Every signed-in entry point lands on Home — never a stale screen.
   resetScreenToHome();
 
   if (!ownsLocal) {
-    // Different user's device state → load their cloud data fresh. Set
-    // identity first so the signed-in UI swaps immediately; data follows.
     useRuchi.setState({ account: user, localOwner: user.id });
     const [profile, meals, stats, recent, notifPrefs] = await Promise.all([
       fetchProfile(),
@@ -369,23 +287,18 @@ async function handleSignedIn(user: AccountUser, localOwner: LocalOwner): Promis
 
   useRuchi.setState({ account: user, localOwner: user.id, authError: null });
 
-  // Fill in from cloud what's missing locally — never overwrite local.
   const profile = await fetchProfile();
   if (profile.ok && profile.data) {
     const s = useRuchi.getState();
     const patch: Partial<RuchiState> = {};
     if (!s.name && profile.data.displayName) patch.name = profile.data.displayName;
-    // Adopt cloud prefs only when local is untouched defaults (no signal).
     if (profile.data.prefs && JSON.stringify(s.prefs) === JSON.stringify(DEFAULT_PREFS)) {
       patch.prefs = profile.data.prefs;
     }
     if (Object.keys(patch).length > 0) useRuchi.setState(patch);
   }
 
-  await syncMeals(useRuchi.getState); // pushes local (migration) + pulls remote
-  // Notification prefs hydrate inside syncMeals — no second round-trip.
-  // Keep the profile row in step with any local identity/prefs the user
-  // had before signing in (e.g. name typed anonymously).
+  await syncMeals(useRuchi.getState);
   const s = useRuchi.getState();
   if (s.name || JSON.stringify(s.prefs) !== JSON.stringify(DEFAULT_PREFS)) {
     scheduleProfilePush(useRuchi.getState);
@@ -409,6 +322,7 @@ export const useRuchi = create<RuchiState>()(
       attention: { lastShown: null, suppressionUntil: null },
       pausedCooking: null,
       notificationChannels: {},
+      notificationTypePrefs: {},
       cookingSessionToken: null,
       syncError: false,
       authError: null,
@@ -451,28 +365,20 @@ export const useRuchi = create<RuchiState>()(
       },
 
       beginCookingSession: () => {
-        // One token per session; reused across retries of the completion
-        // action until the server accepts it, then cleared for the next run.
         if (!get().cookingSessionToken && !sessionTokenOverride) {
           set({ cookingSessionToken: makeSessionToken() });
         }
       },
 
-      // ── Re-attention frequency control ──────────────────────
       markAttentionShown: (type, recipeId) => {
         const attention = { lastShown: { type, recipeId, at: Date.now() }, suppressionUntil: null };
         set({ attention });
-        // Mirror to the server (fire-and-forget) so a future notification
-        // cron never duplicates what in-app Home already showed. Update is
-        // a no-op when no prefs row exists (opt-in stays explicit).
         if (get().account) {
           void pushAttentionState(attention);
         }
       },
 
       dismissAttention: () => {
-        // Short global mute after an explicit dismissal — respects the
-        // user's "not now" without punishing them later.
         const attention = { ...get().attention, suppressionUntil: Date.now() + 2 * 60 * 60 * 1000 };
         set({ attention });
         if (get().account) {
@@ -480,7 +386,6 @@ export const useRuchi = create<RuchiState>()(
         }
       },
 
-      // ── Notification opt-in (explicit, server-backed) ────────
       setNotificationChannel: (channel, enabled) => {
         const notificationChannels = { ...get().notificationChannels, [channel]: enabled };
         set({ notificationChannels });
@@ -491,13 +396,28 @@ export const useRuchi = create<RuchiState>()(
         }
       },
 
-      // ── Incomplete cooking session (real, never fabricated) ─
+      setNotificationType: (type, enabled) => {
+        const typePrefs = { ...get().notificationTypePrefs, [type]: enabled };
+        set({ notificationTypePrefs: typePrefs });
+        if (get().account) {
+          void upsertNotificationTypePrefs(typePrefs).then((r) => {
+            if (!r.ok) useRuchi.setState({ syncError: true });
+          });
+        }
+      },
+
       pauseCookingSession: (recipeId, stepIndex, stepCount) => {
         set({ pausedCooking: { recipeId, stepIndex, stepCount, pausedAt: Date.now() } });
+        if (get().account) {
+          void pushPausedSession({ recipeId, stepIndex, stepCount, pausedAt: Date.now() });
+        }
       },
 
       clearPausedCooking: () => {
         set({ pausedCooking: null });
+        if (get().account) {
+          void pushPausedSession(null);
+        }
       },
 
       logCookedMeal: (entry) => {
@@ -505,22 +425,10 @@ export const useRuchi = create<RuchiState>()(
         set({
           history: [e, ...get().history].slice(0, 200),
           lastCookedAt: e.cookedAt,
-          // localOwner is deliberately untouched: unclaimed anonymous
-          // progress stays `null` (merges into whoever signs in here);
-          // after a sign-out it's already `anon:<userId>` (re-joins that
-          // user). AI/other flows never write ownership.
         });
         track("cooking_completed", { recipeId: entry.recipeId, servings: entry.servings });
         if (get().account) {
-          // Real Cooking Stats: one server-authoritative completion record
-          // per cooking session. Every retry of this action carries the
-          // SAME session token, so repeated clicks dedupe server-side; the
-          // token is cleared only once the server has accepted the record
-          // ('recorded' — a 'duplicate' reply also consumes the stale
-          // token only if it matches this session's). Fire-and-forget;
-          // syncNow retries after a failure.
           const token = get().cookingSessionToken ?? makeSessionToken();
-          const mirror = syncMeals(get); // existing mirror; syncNow retries
           void recordCookingCompletion({
             sessionToken: token,
             recipeId: entry.recipeId,
@@ -532,20 +440,16 @@ export const useRuchi = create<RuchiState>()(
             costInr: entry.cost,
             deliveryCompareInr: entry.deliveryCompareCost,
           }).then(async (r) => {
-            // The mirror's success path clears syncError; settle it first so
-            // a stats/completion failure can't be silently un-flagged.
-            await mirror.catch(() => {});
+            await syncMeals(get).catch(() => {});
             if (!r.ok) {
               useRuchi.setState({ syncError: true });
-              return; // token survives — the retry reuses it
+              return;
             }
             if (r.data === "recorded") {
-              // Consumed: the next cooking session must get a fresh token.
               if (useRuchi.getState().cookingSessionToken === token) {
                 useRuchi.setState({ cookingSessionToken: null });
               }
             }
-            // Refresh the server-derived aggregates once the record lands.
             const [stats, recent] = await Promise.all([
               fetchCookingStats(),
               fetchRecentCookedMeals(8),
@@ -577,7 +481,6 @@ export const useRuchi = create<RuchiState>()(
 
       resetAll: (opts) =>
         set((s) => ({
-          // keep: name, prefs, account — identity and preferences survive
           inventory: opts?.keepKitchen ? s.inventory : [],
           history: [],
           nudges: [],
@@ -594,8 +497,6 @@ export const useRuchi = create<RuchiState>()(
           set({ authError: outcome.reason });
           return "failed";
         }
-        // The onAuthChange listener normally drives reconciliation; run it
-        // here too so the caller's await covers the merge.
         await handleSignedIn(outcome.user, get().localOwner ?? null);
         return "signed-in";
       },
@@ -608,8 +509,6 @@ export const useRuchi = create<RuchiState>()(
           return "failed";
         }
         if (outcome.status === "needs-email-confirmation") {
-          // Honest state: the account row exists, the session does not.
-          // The welcome screen explains the next step until confirmed.
           set({ pendingConfirmationEmail: outcome.email });
           return outcome.status;
         }
@@ -634,7 +533,6 @@ export const useRuchi = create<RuchiState>()(
           set({ authError: outcome.reason });
           return "failed";
         }
-        // Recovery session has served its purpose.
         set({ recoveryMode: false });
         return "updated";
       },
@@ -651,16 +549,15 @@ export const useRuchi = create<RuchiState>()(
       signOut: () => {
         const prev = get().account;
         void sbSignOut();
-        // Mark remaining local data as that user's anonymous leftovers so
-        // signing back in re-syncs it instead of duplicating it.
         set({
           account: null,
           cloudSyncAt: undefined,
           cloudStats: null,
-      recentCooked: [],
-      attention: { lastShown: null, suppressionUntil: null },
-      pausedCooking: null,
-      notificationChannels: {}, // stats are user-scoped — never leak across identities
+          recentCooked: [],
+          attention: { lastShown: null, suppressionUntil: null },
+          pausedCooking: null,
+          notificationChannels: {},
+          notificationTypePrefs: {},
           syncError: false,
           authError: null,
           recoveryMode: false,
@@ -674,7 +571,20 @@ export const useRuchi = create<RuchiState>()(
         scheduleProfilePush(get);
       },
 
-      /** Test seam: pin the per-session idempotency token. */
+      markNotificationOpened: (ledgerId: string) => {
+        if (!get().account) return;
+        void markNotificationEngaged(ledgerId, false).then((r) => {
+          if (!r.ok) useRuchi.setState({ syncError: true });
+        });
+      },
+
+      markNotificationActioned: (ledgerId: string) => {
+        if (!get().account) return;
+        void markNotificationEngaged(ledgerId, true).then((r) => {
+          if (!r.ok) useRuchi.setState({ syncError: true });
+        });
+      },
+
       _makeSessionToken: () => makeSessionToken(),
     }),
     {
@@ -687,6 +597,8 @@ export const useRuchi = create<RuchiState>()(
         history: s.history,
         attention: s.attention,
         pausedCooking: s.pausedCooking,
+        notificationChannels: s.notificationChannels,
+        notificationTypePrefs: s.notificationTypePrefs,
         nudges: s.nudges,
         lastNudges: s.lastNudges,
         lastCookedAt: s.lastCookedAt,
@@ -696,18 +608,9 @@ export const useRuchi = create<RuchiState>()(
   ),
 );
 
-// ── Auth listener (browser only; the store module is imported client-side) ──
-// One subscription drives session restore after refresh, sign-outs from
-// other tabs, and user switches — no duplicated session state.
-
+// ── Auth listener (browser only) ──
 let authListenerAttached = false;
 
-/**
- * Attach the auth listener + run the initial session probe. Runs at most
- * once per page load; flips `authReady` when the check settles so UI can
- * mount auth forms without risking a mid-typing swap. Split from the
- * module body so it stays testable in Node (no import side effects).
- */
 export function initAuthListener(): void {
   if (authListenerAttached) return;
   authListenerAttached = true;
@@ -720,19 +623,16 @@ export function initAuthListener(): void {
         account: null,
         cloudSyncAt: undefined,
         cloudStats: null,
-      recentCooked: [],
-      attention: { lastShown: null, suppressionUntil: null },
-      pausedCooking: null,
-      notificationChannels: {}, // stats are user-scoped — never leak across identities
+        recentCooked: [],
+        attention: { lastShown: null, suppressionUntil: null },
+        pausedCooking: null,
+        notificationChannels: {},
+        notificationTypePrefs: {},
         syncError: false,
         localOwner: `anon:${s.account.id}`,
       });
-    } else if (user && s.account?.id === user.id) {
-      // Same user re-emitted (token refresh) — nothing to do.
     }
   });
-  // Session restore on load: pick up an existing Supabase session even if
-  // the listener's INITIAL_SESSION fired before hydration of localOwner.
   void sbCurrentUser()
     .then((u) => {
       if (!u) return;
@@ -740,26 +640,20 @@ export function initAuthListener(): void {
       if (s.account?.id !== u.id) void handleSignedIn(u, s.localOwner ?? null);
     })
     .finally(() => {
-      // The initial check has settled — signed in, signed out, or the probe
-      // failed. Either way the auth UI can now show its real state.
       useRuchi.setState({ authReady: true });
     });
 }
 
 if (typeof window !== "undefined") {
   initAuthListener();
-  // A recovery email link (Supabase → this origin) enters the app here:
-  // detect + consume once at startup so the Profile card can offer the
-  // set-new-password form. Scrubs tokens from the address bar.
   useRuchi.getState().consumeRecoveryRedirect();
 }
 
-/** Test hook: allow initAuthListener to run again in a fresh test. */
 export function resetAuthListenerForTests(): void {
   authListenerAttached = false;
 }
 
-// ── Auth flow state machine (derived, not stored) ────────────
+// ── Auth flow state machine (derived, not stored) ────────
 //
 // One derivation, consumed by the shell. Supabase stays the ONLY auth
 // authority: every state below is computed from flags the Supabase-backed
@@ -794,7 +688,7 @@ export function deriveAuthFlowState(
   return "initializing";
 }
 
-// ── Derived selectors (pure functions over state) ───────────
+// ── Derived selectors (pure functions over state) ───────
 
 export function inventoryIds(s: Pick<RuchiState, "inventory">): string[] {
   return s.inventory.map((i) => i.ingredientId);

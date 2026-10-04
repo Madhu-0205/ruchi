@@ -8,6 +8,7 @@ import { Reveal } from "@/components/motion";
 import { RecipeCard } from "@/components/RecipeCard";
 import { useScreen } from "@/lib/store/screens";
 import { useRuchi } from "@/lib/store";
+import { getPendingCategory } from "@/lib/notifications/deep-link";
 import { discoverCategories, type DiscoverGroupId, type ResolvedCategory } from "@/lib/data/taxonomy";
 import { isAssumedPantry } from "@/lib/data/ingredients";
 import { computeCostPerServing, computeNutrition } from "@/lib/engine/nutrition";
@@ -57,12 +58,14 @@ const GROUP_META: { id: DiscoverGroupId; eyebrow: string }[] = [
 ];
 
 export default function DiscoverScreen() {
-  const [active, setActive] = useState<string>("quick-easy");
   const [query, setQuery] = useState("");
   const [showFilters, setShowFilters] = useState(false);
   const [maxTime, setMaxTime] = useState(0);
   const [diet, setDiet] = useState<RecipeFilters["diet"]>("all");
   const [dietType, setDietType] = useState<RecipeFilters["dietType"]>("all");
+  // Deep-link: land on the category the notification promised (read-once).
+  const pendingCategory = getPendingCategory();
+  const [active, setActive] = useState<string>(pendingCategory ?? "quick-easy");
   const go = useScreen((s) => s.go);
   const inventory = useRuchi((s) => s.inventory);
   const inventoryIds = useMemo(() => inventory.map((i) => i.ingredientId), [inventory]);

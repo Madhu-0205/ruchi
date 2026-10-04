@@ -14,7 +14,11 @@
 
 import { getSupabase } from "./supabase";
 import { dayKeyOf } from "@/lib/datetime";
-import type { MealHistoryEntry, UserPreferences } from "@/lib/types";
+import type {
+  MealHistoryEntry,
+  NotificationOpportunityType,
+  UserPreferences,
+} from "@/lib/types";
 
 /** Everything the store mirrors for a signed-in user. */
 export interface DurableSnapshot {
@@ -315,8 +319,21 @@ export interface NotificationPrefsRow {
   channels: Partial<Record<NotificationChannel, boolean>>;
   quietHours: { start: number; end: number };
   maxPerWeek: number;
+  /** Per-opportunity-type opt-outs; absent key = default ON. */
+  typePrefs: Partial<Record<NotificationOpportunityType, boolean>>;
   updatedAt: number;
 }
+
+/** The seven opportunity types the ledger/policy system knows. */
+export const NOTIFICATION_OPPORTUNITY_TYPES: readonly string[] = [
+  "resume_cooking",
+  "explicit_followup",
+  "ingredient_opportunity",
+  "cook_again",
+  "contextual_meal",
+  "discover_opportunity",
+  "personality",
+];
 
 /** Server mirror of the attention suppression state (isSuppressed contract). */
 export interface AttentionStateMirror {
@@ -332,6 +349,15 @@ function mapNotificationPrefs(row: Record<string, unknown>): NotificationPrefsRo
   for (const ch of allowed) {
     if (channels[ch] === true) channelFlags[ch] = true;
   }
+  const rawTypePrefs = row.type_prefs as Record<string, boolean> | null;
+  const typeFlags: Partial<Record<NotificationOpportunityType, boolean>> = {};
+  if (rawTypePrefs) {
+    for (const key of Object.keys(rawTypePrefs)) {
+      if (NOTIFICATION_OPPORTUNITY_TYPES.includes(key)) {
+        typeFlags[key as NotificationOpportunityType] = rawTypePrefs[key];
+      }
+    }
+  }
   return {
     channels: channelFlags,
     quietHours: {
@@ -339,6 +365,7 @@ function mapNotificationPrefs(row: Record<string, unknown>): NotificationPrefsRo
       end: Number(quiet.end ?? 8),
     },
     maxPerWeek: Number(row.max_per_week ?? 2),
+    typePrefs: typeFlags,
     updatedAt: new Date(row.updated_at as string).getTime(),
   };
 }
@@ -410,6 +437,63 @@ export async function pushAttentionState(
     .from("notification_prefs")
     .update(payload)
     .eq("user_id", user.id);
+  return error ? fail("error") : { ok: true, data: null };
+}
+
+/**
+ * Insert or clear the paused session so RESUME_COOKING can be delivered
+ * later (migration 0006 adds notification_prefs.paused_session jsonb).
+ * A real pause is the only source — never inferred.
+ */
+export async function pushPausedSession(session: { recipeId: string; stepIndex: number; stepCount: number; pausedAt: number } | null): Promise<DataResult<null>> {
+  const supabase = getSupabase();
+  if (!supabase) return fail("unconfigured");
+  const user = (await supabase.auth.getUser()).data.user;
+  if (!user) return fail("error");
+  const payload: Record<string, unknown> = { paused_session: session };
+  const { error } = await supabase
+    .from("notification_prefs")
+    .update(payload)
+    .eq("user_id", user.id);
+  return error ? fail("error") : { ok: true, data: null };
+}
+
+/** Per-type opt-in overrides (spec §13). Absent key = default ON. */
+export async function upsertNotificationTypePrefs(
+  typePrefs: Partial<Record<NotificationOpportunityType, boolean>>,
+): Promise<DataResult<null>> {
+  const supabase = getSupabase();
+  if (!supabase) return fail("unconfigured");
+  const user = (await supabase.auth.getUser()).data.user;
+  if (!user) return fail("error");
+  const clean: Record<string, boolean> = {};
+  for (const [k, v] of Object.entries(typePrefs)) {
+    if (NOTIFICATION_OPPORTUNITY_TYPES.includes(k) && typeof v === "boolean") {
+      clean[k] = v;
+    }
+  }
+  if (Object.keys(clean).length === 0) return { ok: true, data: null };
+  const { error } = await supabase
+    .from("notification_prefs")
+    .update({ type_prefs: clean })
+    .eq("user_id", user.id);
+  return error ? fail("error") : { ok: true, data: null };
+}
+
+/** Mark a notification opened / actioned (client → RPC, own-row RLS). */
+export async function markNotificationEngaged(
+  ledgerId: string,
+  actioned = false,
+): Promise<DataResult<null>> {
+  const supabase = getSupabase();
+  if (!supabase) return fail("unconfigured");
+  const user = (await supabase.auth.getUser()).data.user;
+  if (!user) return fail("error");
+  // RPC throws / returns empty when the row belongs to another user.
+  const { error } = await supabase.rpc("mark_notification_engaged", {
+    p_ledger_id: ledgerId,
+    p_actioned: actioned,
+  });
   return error ? fail("error") : { ok: true, data: null };
 }
 

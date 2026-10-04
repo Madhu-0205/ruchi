@@ -10,6 +10,7 @@ import { RECIPES } from "@/lib/data/recipes";
 import { useScreen } from "@/lib/store/screens";
 import type { CookingStatsRow, NotificationChannel } from "@/lib/auth/supabase-data";
 import { insertBetaFeedback, type FeedbackTopic } from "@/lib/auth/supabase-data";
+import { getSupabase } from "@/lib/auth/supabase";
 import { buildNudges, weeklySummaryLine } from "@/lib/engine/nudge";
 import {
   disableWebPush,
@@ -603,6 +604,7 @@ function NotificationOptIn() {
       <div className="mt-4">
         <NotificationOpportunityToggles />
       </div>
+      <CheckNowRow />
       <p className="mt-4 border-t border-line pt-3 text-[12px] leading-relaxed text-muted">
         Off by default. If you turn these on, RUCHI will only reach out when it has
         something genuinely useful — and a quiet-hours limit always applies.
@@ -673,6 +675,85 @@ function NotificationOpportunityToggles() {
         Nothing here is a guilt trip. If RUCHI reaches out, it has to be
         worth your time — and it will always respect your quiet hours.
       </p>
+    </div>
+  );
+}
+
+// ── Check now — the daily check, on demand ───────────────────
+// Same pipeline, policy and ledger as the scheduled 6 pm run, scoped
+// to the caller's own account and triggered by them. The policy layer
+// (1/day, 2/week, cooldowns, dedup) makes repeated presses harmless:
+// after the first real send, a second press is an honest "nothing to
+// send". Shown only for signed-in users with push enabled.
+
+const CHECK_NOW_FALLBACK = "Couldn't run the check just now. Try again in a moment.";
+
+const CHECK_NOW_NOTES: Record<string, string> = {
+  delivered: "Done — a nudge is on its way. 📬",
+  suppressed: "Done — nothing worth sending right now.",
+  skipped: "Done — nothing worth sending right now.",
+  pruned: "The check ran, but your saved subscription looks stale — turn push off and on to fix it.",
+  failed: "The check ran, but delivery didn't go through. Try again later.",
+  not_opted_in: "Push isn't active on this device yet — turn on Dinner nudges first.",
+  error: CHECK_NOW_FALLBACK,
+};
+
+function checkNowNote(outcome: string): string {
+  return CHECK_NOW_NOTES[outcome] ?? CHECK_NOW_FALLBACK;
+}
+
+function CheckNowRow() {
+  const account = useRuchi((s) => s.account);
+  const webPushOn = useRuchi((s) => s.notificationChannels.web_push === true);
+  const [state, setState] = useState<"idle" | "checking" | "done">("idle");
+  const [note, setNote] = useState<string | null>(null);
+
+  if (!account || !webPushOn) return null;
+
+  const run = async () => {
+    setState("checking");
+    setNote(null);
+    try {
+      const supabase = getSupabase();
+      const session = supabase ? (await supabase.auth.getSession()).data.session : null;
+      const token = session?.access_token;
+      if (!supabase || !token) {
+        setState("done");
+        setNote(CHECK_NOW_FALLBACK);
+        return;
+      }
+      const res = await fetch("/api/notifications/check-now", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      });
+      const json = res.ok ? ((await res.json()) as { outcome?: string }) : null;
+      const outcome = json?.outcome ?? "error";
+      setState("done");
+      setNote(checkNowNote(outcome));
+    } catch {
+      setState("done");
+      setNote(CHECK_NOW_FALLBACK);
+    }
+  };
+
+  return (
+    <div className="mt-4 border-t border-line pt-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[14px] font-semibold">Check now</p>
+          <p className="mt-0.5 text-[12px] text-muted">
+            Run RUCHI&apos;s usual check right now — same limits as always.
+          </p>
+        </div>
+        <Button onClick={() => void run()} disabled={state === "checking"}>
+          {state === "checking" ? <Loader2 size={15} className="animate-spin" /> : "Check"}
+        </Button>
+      </div>
+      {note && (
+        <p className="mt-2 text-[12.5px] text-muted" role="status">
+          {note}
+        </p>
+      )}
     </div>
   );
 }

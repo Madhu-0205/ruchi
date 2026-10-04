@@ -82,8 +82,8 @@ r=$(q "select relrowsecurity from pg_class c join pg_namespace n on n.oid=c.reln
 p=$(q "select count(*) from pg_policies where schemaname='public' and tablename='notification_ledger' and policyname='notification_ledger_select_own'")
 [ "$p" = "1" ] && pass "select-own policy present" || fail "select-own policy missing"
 
-col=$(q "select count(*) from information_schema.columns where table_schema='public' and table_name='notification_prefs' and column_name in ('type_prefs','paused_session')")
-[ "$col" = "2" ] && pass "prefs columns type_prefs + paused_session exist" || fail "prefs columns missing ($col)"
+col=$(q "select count(*) from information_schema.columns where table_schema='public' and table_name='notification_prefs' and column_name in ('type_prefs','paused_session','kitchen_mirror','last_action')")
+[ "$col" = "4" ] && pass "prefs columns type_prefs + paused_session + kitchen_mirror + last_action exist" || fail "prefs columns missing ($col)"
 
 u=$(q "select count(*) from pg_indexes where schemaname='public' and indexname='notification_ledger_dedup'")
 [ "$u" = "1" ] && pass "unique dedup index present" || fail "unique dedup index missing"
@@ -177,9 +177,19 @@ case "$err" in *unknown\ notification*|*exception*) pass "unknown type key rejec
 err=$(q "update public.notification_prefs set type_prefs = '{\"personality\": \"yes\"}' where user_id='$UA'" 2>&1)
 case "$err" in *check*|*violates*) pass "non-boolean type value rejected" ;; "") fail "non-boolean type value accepted" ;; esac
 
-# ── 6. paused_session column usable ──────────────────────────
+# ── 6. paused_session / kitchen_mirror / last_action usable ──
 q "update public.notification_prefs set paused_session = '{\"recipeId\":\"paneer-egg-bhurji\",\"stepIndex\":3,\"stepCount\":6,\"pausedAt\":1}' where user_id='$UA'" >/dev/null \
   && pass "paused_session stores a real pause" || fail "paused_session write failed"
+
+q "update public.notification_prefs set kitchen_mirror = '{\"ids\":[\"egg\",\"paneer\",\"onion\",\"tomato\"],\"updatedAt\":1727846400000}' where user_id='$UA'" >/dev/null \
+  && pass "kitchen_mirror stores real confirmed ingredients" || fail "kitchen_mirror write failed"
+bad=$(q "update public.notification_prefs set kitchen_mirror = '{\"ids\":\"not-an-array\",\"updatedAt\":1}' where user_id='$UA'" 2>&1)
+case "$bad" in *check*|*violates*) pass "kitchen_mirror shape CHECK rejects ids-as-string" ;; "") fail "kitchen_mirror bad shape accepted" ;; esac
+
+q "update public.notification_prefs set last_action = '{\"kind\":\"scan\",\"at\":1727846400000}' where user_id='$UA'" >/dev/null \
+  && pass "last_action stores a real scan moment" || fail "last_action write failed"
+bad=$(q "update public.notification_prefs set last_action = '{\"kind\":\"streak_nag\",\"at\":1}' where user_id='$UA'" 2>&1)
+case "$bad" in *check*|*violates*) pass "last_action CHECK rejects unknown kinds" ;; "") fail "last_action bad kind accepted" ;; esac
 
 if [ "$FAILS" -eq 0 ]; then
   say "ALL 0006 CHECKS PASSED"

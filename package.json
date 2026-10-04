@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "verify:db": "bash supabase/tests/verify-local.sh",
     "verify:ledger": "bash supabase/tests/verify-0006.sh",
-    "verify:e2e": "node supabase/tests/e2e-sim.mjs"
+    "verify:e2e": "node supabase/tests/e2e-sim.mjs",
+    "verify:notify": "tsx supabase/tests/e2e-notifications.mts"
   },
   "dependencies": {
     "@google/genai": "^2.24.0",
@@ -40,6 +41,7 @@
     "pg": "^8.23.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.11",
+    "tsx": "^4.23.15",
     "typescript": "^5.8.3",
     "vitest": "^5.0.1"
   }

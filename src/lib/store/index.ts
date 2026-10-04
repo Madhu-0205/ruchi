@@ -54,6 +54,8 @@ import {
   fetchNotificationPrefs,
   pushAttentionState,
   upsertNotificationChannels,
+  pushKitchenMirror,
+  pushLastAction,
   pushPausedSession,
   upsertNotificationTypePrefs,
   type NotificationChannel,
@@ -187,6 +189,26 @@ function scheduleProfilePush(get: () => RuchiState) {
       else useRuchi.setState({ syncError: true });
     });
   }, 1200);
+}
+
+/**
+ * Fire-and-forget server mirrors for the notification cron's real
+ * signals (kitchen, last action). Never blocks the UI and never
+ * surfaces a sync error — the mirror is an optimization, and the cron
+ * stays correctly silent when the mirror is absent or stale.
+ */
+function mirrorKitchenToServer(state: RuchiState): void {
+  if (!state.account) return;
+  const ids = state.inventory.map((i) => i.ingredientId);
+  void pushKitchenMirror({ ids, updatedAt: Date.now() });
+}
+
+function mirrorLastActionToServer(
+  state: RuchiState,
+  action: Parameters<typeof pushLastAction>[0],
+): void {
+  if (!state.account) return;
+  void pushLastAction(action);
 }
 
 async function syncMeals(get: () => RuchiState): Promise<void> {
@@ -341,10 +363,12 @@ export const useRuchi = create<RuchiState>()(
         const item: KitchenItem = { id: makeId(), ingredientId, addedAt: Date.now() };
         set({ inventory: [...get().inventory, item] });
         track("ingredient_added", { ingredientId });
+        mirrorKitchenToServer(get());
       },
 
       removeItem: (ingredientId) => {
         set({ inventory: get().inventory.filter((i) => i.ingredientId !== ingredientId) });
+        mirrorKitchenToServer(get());
       },
 
       setItemExpiry: (ingredientId, expiresAt) => {
@@ -357,6 +381,7 @@ export const useRuchi = create<RuchiState>()(
 
       clearKitchen: () => {
         set({ inventory: [] });
+        mirrorKitchenToServer(get());
       },
 
       setPrefs: (p) => {
@@ -427,6 +452,13 @@ export const useRuchi = create<RuchiState>()(
           lastCookedAt: e.cookedAt,
         });
         track("cooking_completed", { recipeId: entry.recipeId, servings: entry.servings });
+        // A completion is the strongest "the kitchen was used" signal the
+        // server can honestly follow up on (cook_again beats generic follow-ups).
+        mirrorLastActionToServer(get(), {
+          kind: "start_cooking",
+          recipeId: entry.recipeId,
+          at: e.cookedAt,
+        });
         if (get().account) {
           const token = get().cookingSessionToken ?? makeSessionToken();
           void recordCookingCompletion({

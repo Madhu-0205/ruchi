@@ -59,6 +59,11 @@ vi.mock("@/lib/auth/supabase-data", () => ({
   fetchNotificationPrefs: async () => ({ ok: true as const, data: null }),
   pushAttentionState: async () => ({ ok: true as const, data: null }),
   upsertNotificationChannels: async () => ({ ok: true as const, data: null }),
+  pushKitchenMirror: async () => ({ ok: true as const, data: null }),
+  pushLastAction: async () => ({ ok: true as const, data: null }),
+  pushPausedSession: async () => ({ ok: true as const, data: null }),
+  upsertNotificationTypePrefs: async () => ({ ok: true as const, data: null }),
+  markNotificationEngaged: async () => ({ ok: true as const, data: null }),
 }));
 
 import { setSessionTokenForTests, useRuchi } from "../index";

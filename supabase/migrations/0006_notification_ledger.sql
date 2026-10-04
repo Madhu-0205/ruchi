@@ -130,6 +130,30 @@ alter table public.notification_prefs
 alter table public.notification_prefs
   add column if not exists paused_session jsonb;
 
+-- REAL confirmed ingredients (client kitchen mirror): the server-side
+-- INGREDIENT_OPPORTUNITY / explicit-followup signal. Written by the
+-- client on scan-confirm and kitchen edits; the cron recomputes the
+-- match through the deterministic engine and stays silent when nothing
+-- is genuinely eligible. Shape: { ids: string[], updatedAt: epoch_ms }.
+alter table public.notification_prefs
+  add column if not exists kitchen_mirror jsonb
+  constraint notification_prefs_kitchen_shape
+  check (kitchen_mirror is null or (
+    jsonb_typeof(kitchen_mirror) = 'object'
+    and jsonb_typeof(kitchen_mirror -> 'ids') = 'array'
+    and jsonb_typeof(kitchen_mirror -> 'updatedAt') = 'number'
+  ));
+
+-- The user's last REAL action (scan confirm / recipe view): the
+-- EXPLICIT_FOLLOWUP signal. Shape: { kind, recipeId?, at }.
+alter table public.notification_prefs
+  add column if not exists last_action jsonb
+  constraint notification_prefs_last_action_shape
+  check (last_action is null or (
+    jsonb_typeof(last_action) = 'object'
+    and last_action ->> 'kind' in ('scan', 'view_recipe', 'start_cooking')
+  ));
+
 alter table public.notification_prefs
   drop constraint if exists notification_prefs_types_shape;
 alter table public.notification_prefs

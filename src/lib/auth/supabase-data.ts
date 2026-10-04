@@ -324,6 +324,19 @@ export interface NotificationPrefsRow {
   updatedAt: number;
 }
 
+/** The server mirror of the client kitchen (real confirmed ingredients only). */
+export interface KitchenMirror {
+  ids: string[];
+  updatedAt: number;
+}
+
+/** The last real client action the server may follow up on. */
+export interface LastActionMirror {
+  kind: "scan" | "view_recipe" | "start_cooking";
+  recipeId?: string;
+  at: number;
+}
+
 /** The seven opportunity types the ledger/policy system knows. */
 export const NOTIFICATION_OPPORTUNITY_TYPES: readonly string[] = [
   "resume_cooking",
@@ -436,6 +449,41 @@ export async function pushAttentionState(
   const { error } = await supabase
     .from("notification_prefs")
     .update(payload)
+    .eq("user_id", user.id);
+  return error ? fail("error") : { ok: true, data: null };
+}
+
+/**
+ * Mirror the client kitchen (REAL confirmed ingredients) to the server so
+ * the notification cron can compute a genuine ingredient_opportunity.
+ * Failure-tolerant: the mirror is an optimization for the notification
+ * layer, never a sync-error surface.
+ */
+export async function pushKitchenMirror(mirror: KitchenMirror): Promise<DataResult<null>> {
+  const supabase = getSupabase();
+  if (!supabase) return fail("unconfigured");
+  const user = (await supabase.auth.getUser()).data.user;
+  if (!user) return fail("error");
+  const { error } = await supabase
+    .from("notification_prefs")
+    .update({ kitchen_mirror: mirror })
+    .eq("user_id", user.id);
+  return error ? fail("error") : { ok: true, data: null };
+}
+
+/**
+ * Record the last REAL user action (scan confirm / recipe view) so the
+ * cron can send an honest EXPLICIT_FOLLOWUP. Never inferred — only the
+ * actual moment a user did the thing is recorded.
+ */
+export async function pushLastAction(action: LastActionMirror): Promise<DataResult<null>> {
+  const supabase = getSupabase();
+  if (!supabase) return fail("unconfigured");
+  const user = (await supabase.auth.getUser()).data.user;
+  if (!user) return fail("error");
+  const { error } = await supabase
+    .from("notification_prefs")
+    .update({ last_action: action })
     .eq("user_id", user.id);
   return error ? fail("error") : { ok: true, data: null };
 }

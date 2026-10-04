@@ -21,6 +21,7 @@ import { useRuchi } from "@/lib/store";
 import { INGREDIENTS, findIngredient } from "@/lib/data/ingredients";
 import { parseIngredientText } from "@/lib/engine/parse";
 import { track } from "@/lib/engine/analytics";
+import { pushLastAction } from "@/lib/auth/supabase-data";
 import { getVisionService, prepareImageForVision } from "@/lib/ai";
 import type { VisionAnalysis } from "@/lib/ai";
 import type { Intent } from "@/lib/types";
@@ -244,6 +245,9 @@ export default function ScanScreen() {
     for (const id of ids) addItem(id);
     track("ingredient_scan_completed", { count: ids.length });
     track("ingredients_added", { count: ids.length, via: "scan" });
+    // Honest EXPLICIT_FOLLOWUP signal: the user JUST scanned and confirmed
+    // real ingredients (fire-and-forget; own-row scoped by RLS).
+    void pushLastAction({ kind: "scan", at: Date.now() });
     go("home");
   };
 

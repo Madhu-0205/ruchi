@@ -6,6 +6,7 @@ import { ArrowLeft, ChefHat, Flame, ShoppingBag, Sparkles } from "lucide-react";
 import { Button, Card, MetaLine, NumberFlow, Pill, SectionTitle, ShimmerSweep, Stat } from "@/components/ui";
 import { SpringButton } from "@/components/motion";
 import { heroReveal } from "@/lib/motion";
+import { pushLastAction } from "@/lib/auth/supabase-data";
 import { FoodVisual } from "@/components/FoodVisual";
 import { useScreen } from "@/lib/store/screens";
 import { useRuchi } from "@/lib/store";
@@ -32,6 +33,12 @@ export default function MealDetailScreen() {
   useEffect(() => {
     if (!recipe) back();
   }, [recipe, back]);
+
+  // Honest EXPLICIT_FOLLOWUP signal: the user viewed THIS dish (real id,
+  // real moment — fire-and-forget, own-row scoped by RLS).
+  useEffect(() => {
+    if (recipe) void pushLastAction({ kind: "view_recipe", recipeId: recipe.id, at: Date.now() });
+  }, [recipe]);
 
   const servings = people;
   const nutrition = useMemo(

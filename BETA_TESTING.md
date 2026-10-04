@@ -95,20 +95,60 @@ the link is tapped twice — the fix is simply requesting a fresh link.
 - Gibberish search ("zzzqqq") → empty state with suggestions, never a blank
   screen
 
-## Notifications (opt-in, beta)
+## Notifications 2.0 (opt-in, live)
 
-- Opt in via the **Profile → notifications** toggle. The browser asks for
-  permission; a service worker (sw.js) receives pushes in the background.
-- What can arrive: a nudge when a planned meal goes uncooked for a few days,
-  a weekly recap, and milestone congratulations. Never marketing, and
-  nothing during quiet hours (10 pm–8 am) or while you're mid-cook.
-- Turning the toggle off stops future pushes immediately; you can re-enable
-  any time. No emails are sent — this is browser push only.
-- Deployment status: delivery is **dormant until the server-side push keys
-  are configured**. The toggle always works (permission is remembered), but
-  pushes only start once the VAPID env vars are set on the host and the
-  notification_send_log table exists in Supabase. If the toggle says
-  "unconfigured", that's why — the app stays fully usable either way.
+Push is live in production. RUCHI checks in at most once a day (the server
+check runs around 6 pm IST) and only sends when something real happened in
+your app — never marketing, no emails, browser push only.
+
+**Opt in (one-time, per device):**
+
+1. iPhone: open the app in Safari → Share → **Add to Home Screen** first
+   (iOS only delivers web push to an installed app; iOS 16.4+). Android:
+   any browser works.
+2. Sign in. Push and the open-tracking ledger are tied to your account.
+3. Profile → Notifications → turn on **"Dinner nudges"** → **Allow** when
+   the browser asks. If it says blocked, re-enable this site's
+   notifications in browser settings.
+
+**What can arrive** — each type has its own switch under "What RUCHI may
+nudge you about":
+
+- Finish a dish you paused mid-cook (points back at the exact step)
+- A meal idea built from the ingredients you actually scanned or added
+- A quick follow-up right after you scanned or viewed a dish
+- "Round two" on a dish you finished a day or more ago
+- Occasionally, one Discover category worth a look (once a week)
+
+**Guardrails you should be able to feel:**
+
+- Off by default; master toggle off = silence immediately
+- At most 1 push/day and 2/week, and never between 10 pm and 8 am IST
+- The same reminder for the same dish never sends twice the same day
+- Tapping a push lands on the exact screen the message promised
+- A push whose context has expired (e.g. you already resumed) is dropped
+  silently — a late reminder never nags about something that's over
+
+### Notification checklist
+
+- [ ] Opt-in: permission prompt → Allow → toggle stays on after refresh
+- [ ] iPhone: added to Home Screen BEFORE opting in (otherwise no push)
+- [ ] Pause a dish in the morning (advance 1+ step, exit Cooking Mode) →
+      the finish-it nudge can arrive at the evening check; tapping it
+      opens Cooking Mode at your saved step
+- [ ] **Check now** (Profile → Notifications): runs the same check on
+      demand instead of waiting for 6 pm — pressing it twice cannot
+      send a second push
+- [ ] Scan ingredients → confirm → any idea that arrives names a dish
+      using what you actually have
+- [ ] Switch OFF one nudge type (e.g. "Cook again") → that type never
+      arrives; the others still can
+- [ ] Master toggle off → nothing arrives; back on → works again
+- [ ] Nothing arrives between 10 pm and 8 am
+- [ ] Never more than one push in a day
+
+Report wrong timing, an irrelevant idea, a wrong landing screen, or
+anything that feels like spam — those are bugs.
 
 ## What to report
 

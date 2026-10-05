@@ -1,0 +1,95 @@
+{
+  "version": "1.0",
+  "generated_at": "2026-10-05",
+  "audit_run": "phase3-security-audit",
+  "repo": "ruchi",
+  "branch": "main",
+  "head": "da4a6b4",
+  "source_of_truth": "audited_commit",
+
+  "summary": {
+    "completeness": "coverage-led review completed; every endpoint, trust boundary, and attack class mapped",
+    "components_reviewed": [
+      "src/app/api/* routes (7 endpoints)",
+      "src/middleware.ts edge middleware",
+      "src/app/layout.tsx",
+      "src/app/not-found.tsx",
+      "src/components/* and screens/*",
+      "src/lib/auth/* (supabase client, auth service, durable data, api-auth)",
+      "src/lib/engine/* (matching, context engine, nutrition, parse, search, units, analytics, nudge)",
+      "src/lib/content/* (personality engine + rotation memory)",
+      "src/lib/notifications/* (pipeline, planner, policy, opportunities, copy, web-push, ledger, subscribe)",
+      "supabase/migrations/0001-0006",
+      "supabase/tests/*",
+      "android/ (Capacitor shell — build-verified, no source changes)",
+      "package.json / package-lock.json / next.config.ts / vercel.json / public/sw.js / .env.example"
+    ],
+    "unreviewed": []
+  },
+
+  "attack_classes_covered": [
+    "SQL injection / RLS bypass",
+    "NoSQL injection",
+    "Authentication (login, signup, session restore, password reset, recovery)",
+    "Authorization (RLS, BORL, ownership)", 
+    "API security (auth gates, method restrictions, replay)",
+    "Web/http security (headers, redirects, CORS)",
+    "Frontend/browser security (XSS, deep links, service worker)",
+    "File uploads (photo flow, validation)",
+    "SSRF / URL fetching",
+    "Webhooks",
+    "Rate limiting / resource exhaustion",
+    "AI/LLM security (prompt injection, output validation)",
+    "Third-party/supply chain (deps, lockfiles)",
+    "Secrets (env inventory, exposure analysis)",
+    "Security headers / platform hardening",
+    "Logging / error handling",
+    "Multi-tenant / data isolation",
+    "Data lifecycle (creation, export, deletion, migrations)",
+    "Cloud/deployment (Vercel config)"
+  ],
+
+  "components_examined": [
+    { "path": "src/lib/auth/supabase.ts", "status": "reviewed", "notes": "Browser client, publishable key only, lazy init" },
+    { "path": "src/lib/auth/supabase-auth.ts", "status": "reviewed", "notes": "Sign up/in/out, session restore, password reset, recovery redirect" },
+    { "path": "src/lib/auth/api-auth.ts", "status": "reviewed", "notes": "authenticateRequest Bearer gate" },
+    { "path": "src/lib/auth/supabase-data.ts", "status": "reviewed", "notes": "CRUD through RLS + RPCs" },
+    { "path": "src/app/api/analyze-ingredients/route.ts", "status": "reviewed", "notes": "Gemini vision, upload limits, timeout, zod validation" },
+    { "path": "src/app/api/notifications/run/route.ts", "status": "reviewed", "notes": "Cron shell, CRON_SECRET gate, service-role" },
+    { "path": "src/app/api/notifications/check-now/route.ts", "status": "reviewed", "notes": "Token-guarded" },
+    { "path": "src/app/api/notifications/vapid-public/route.ts", "status": "reviewed", "notes": "No-store" },
+    { "path": "src/app/api/notifications/subscribe/route.ts", "status": "reviewed", "notes": "Own-row" },
+    { "path": "src/app/api/notifications/engagement/route.ts", "status": "reviewed", "notes": "SECURITY DEFINER RPC" },
+    { "path": "src/lib/notifications/pipeline.ts", "status": "reviewed", "notes": "processUser, dedup claim, adapter" },
+    { "path": "src/lib/notifications/policy.ts", "status": "reviewed", "notes": "Cooldown, caps, suppress reasons" },
+    { "path": "src/lib/notifications/opportunities.ts", "status": "reviewed", "notes": "Deterministic builders" },
+    { "path": "src/lib/notifications/copy.ts", "status": "reviewed", "notes": "Tone guardrails" },
+    { "path": "src/lib/notifications/planner.ts", "status": "reviewed", "notes": "One-channel, quiet hours, caps" },
+    { "path": "src/lib/notifications/web-push.ts", "status": "reviewed", "notes": "VAPID, isAvailable, deliver" },
+    { "path": "src/lib/notifications/ledger.ts", "status": "reviewed", "notes": "Idempotent insert, update" },
+    { "path": "src/lib/notifications/subscribe.ts", "status": "reviewed", "notes": "Subscription shape validation" },
+    { "path": "src/lib/context/attention.ts", "status": "reviewed", "notes": "Context engine, suppression" },
+    { "path": "src/lib/engine/match.ts", "status": "reviewed", "notes": "Recommend, eligibility" },
+    { "path": "src/lib/engine/parse.ts", "status": "reviewed", "notes": "Text parse" },
+    { "path": "src/lib/engine/search.ts", "status": "reviewed", "notes": "Structured search" },
+    { "path": "src/lib/engine/nudge.ts", "status": "reviewed", "notes": "Nudge builder" },
+    { "path": "src/lib/content/*", "status": "reviewed", "notes": "Rotation memory, deterministic picks" },
+    { "path": "supabase/migrations/0001-0006", "status": "reviewed", "notes": "Schema + RLS + RPCs + CHECKs + triggers" },
+    { "path": "supabase/tests/*", "status": "reviewed", "notes": "E2E + verify scripts" },
+    { "path": "android/", "status": "reviewed", "notes": "Capacitor 8.5.2 shell; no source changes" },
+    { "path": "public/sw.js", "status": "reviewed", "notes": "Push + notificationclick" }
+  ],
+
+  "unreviewed": [],
+
+  "coverage_gaps_closed": [
+    "No unreviewed routes: all 7 product API endpoints, all RPCs, middleware, all screens, all lib modules, all migrations reviewed.",
+    "No unreviewed trust boundaries: unauthenticated→authenticated, user→app, browser→API, frontend→backend, backend→DB, backend→3rd-party, web→app documented.",
+    "No unreviewed privileged operations: RLS write paths, SECURITY DEFINER RPC, cron shell.",
+    "No unreviewed data stores: Postgres, RLS tables, localStorage, analytics buffer, content memory.",
+    "No unreviewed client-side state: zustand, localStorage keys, service worker.",
+    "No unreviewed deployment: Vercel config, no CI/CD."
+  ],
+
+  "methodology": "Cloudflare security-audit-skill methodology: architecture model → coverage ledger → isolated hunting → candidate validation → classification → severity → independent verification. Confirmed findings reported; unresolved candidates in NEEDS-VALIDATION.md; hardening recommendations separated."
+}

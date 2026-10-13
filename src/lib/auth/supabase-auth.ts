@@ -161,6 +161,23 @@ export async function signOut(): Promise<void> {
 
 // ── Session restoration + change listener ────────────────────
 
+/**
+ * Returns the current session access token, if any. Used by the account
+ * deletion flow to authorize the server-side DELETE request on behalf of
+ * the signed-in user. Returns null when not signed in or not configured.
+ */
+export async function currentSessionAccessToken(): Promise<string | null> {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    if (error || !data?.session?.access_token) return null;
+    return data.session.access_token;
+  } catch {
+    return null;
+  }
+}
+
 /** Restore an existing session after a page refresh. Null when anonymous. */
 export async function currentUser(): Promise<AccountUser | null> {
   const supabase = getSupabase();

@@ -21,6 +21,12 @@ interface ScreenState {
 
   go: (s: Screen, opts?: { recipeId?: string }) => void;
   back: () => void;
+  /**
+   * Jump straight to home and forget the navigation stack. Used when the
+   * current screen's context is gone for good — e.g. after the user's
+   * account was deleted, where "back" would return to a dead profile.
+   */
+  backToHome: () => void;
   hydrate: () => void;
 }
 
@@ -44,6 +50,9 @@ export const useScreen = create<ScreenState>()((set, get) => ({
       const prev = h.pop() ?? "home";
       return { screen: prev, history: h, recipeId: prev === "meal" ? st.recipeId : undefined };
     }),
+
+  backToHome: () =>
+    set({ screen: "home", recipeId: undefined, cameFrom: undefined, history: [] }),
 
   hydrate: () => void get(),
 }));

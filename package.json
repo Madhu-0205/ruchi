@@ -17,6 +17,9 @@
     "verify:notify": "tsx supabase/tests/e2e-notifications.mts"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
     "@google/genai": "^2.24.0",
     "@supabase/supabase-js": "^2.116.0",
     "framer-motion": "^12.23.0",

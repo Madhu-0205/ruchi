@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ruchi</string>
+    <string name="title_activity_main">ruchi</string>
+    <string name="package_name">com.ruchi.ruchi</string>
+    <string name="custom_url_scheme">com.ruchi.ruchi</string>
+</resources>

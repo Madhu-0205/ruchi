@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { CloudUpload, Loader2, LogOut } from "lucide-react";
 import { Button, Card, NumberFlow, Pill, SectionTitle } from "@/components/ui"; // SectionHeading added where used below
 import AuthCard from "@/components/AuthCard";
@@ -17,6 +18,7 @@ import {
   enableWebPush,
   type SubscribeOutcome,
 } from "@/lib/notifications/subscribe";
+import { deleteOwnAccount } from "@/lib/auth/account";
 import type {
   BudgetPerMeal,
   DietPreference,
@@ -79,7 +81,9 @@ export default function ProfileScreen() {
     syncError,
     signOut,
     syncNow,
+    resetAfterAccountDeletion,
   } = useRuchi();
+
   const [feedbackTopic, setFeedbackTopic] = useState<FeedbackTopic>("general");
   const [feedbackText, setFeedbackText] = useState("");
   const [feedbackStatus, setFeedbackStatus] = useState<
@@ -93,6 +97,7 @@ export default function ProfileScreen() {
   const lastNudges = useRuchi((s) => s.lastNudges);
   const upsertNudges = useRuchi((s) => s.upsertNudges);
   const go = useScreen((s) => s.go);
+  const router = useRouter();
 
   const submitFeedback = async () => {
     setFeedbackStatus("sending");
@@ -127,12 +132,59 @@ export default function ProfileScreen() {
     });
     if (inbox.length > 0) upsertNudges(inbox);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
+  }, []);  useEffect(() => {
     const unread = nudges.filter((n) => !n.read).length;
     if (unread > 0) markNudgesRead();
   }, [nudges, markNudgesRead]);
+
+  // Account deletion: confirmation + loading + success/failure.
+  const [deleting, setDeleting] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<"idle" | "confirm">("idle");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const startDeleteConfirm = () => {
+    setDeleteTarget("confirm");
+    setDeleteError(null);
+  };
+  const cancelDelete = () => {
+    setDeleteTarget("idle");
+    setDeleteError(null);
+  };
+
+  const doDelete = async () => {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const result = await deleteOwnAccount();
+      if (result.ok) {
+        // The server has already removed the account: drop the Supabase
+        // session next so the client cannot keep using a dead token.
+        try {
+          const supabase = getSupabase();
+          if (supabase) {
+            await supabase.auth.signOut();
+          }
+        } catch {
+          /* best-effort — the account is gone regardless */
+        }
+
+        // Wipe this device's copy of the deleted account (in-memory and
+        // persisted) in one place, then return to the app root.
+        resetAfterAccountDeletion();
+        useScreen.getState().backToHome();
+        return;
+      }
+      setDeleteError(
+        result.reason === "unconfigured"
+          ? "Accounts aren't set up in this build yet."
+          : result.reason === "network"
+            ? "Couldn't reach the account service. Check your connection."
+            : "Couldn't complete account deletion. Try again in a moment.",
+      );
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const optionButton = (selected: boolean) =>
     `rounded-full px-4 py-2.5 text-sm font-semibold transition-all ${
@@ -186,6 +238,20 @@ export default function ProfileScreen() {
               <Button variant="ghost" onClick={signOut}>
                 <LogOut size={15} /> Sign out
               </Button>
+              <Button
+                variant="ghost"
+                onClick={startDeleteConfirm}
+                className="text-flame"
+              >
+                Delete account
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => router.push("/privacy")}
+                className="text-muted"
+              >
+                Privacy & deletion
+              </Button>
             </div>
           </div>
         ) : (
@@ -195,6 +261,55 @@ export default function ProfileScreen() {
           <AuthCard />
         )}
       </Card>
+
+      {/* Account deletion confirmation overlay — shown once the user opts in. */}
+      {deleteTarget === "confirm" && (
+        <div
+          aria-modal="true"
+          role="dialog"
+          className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-ink/70 backdrop-blur-sm"
+        >
+          <div className="w-full max-w-sm rounded-3xl border border-line bg-surface p-6 shadow-soft">
+            <h2 className="font-display text-display-md font-semibold">
+              Delete your account?
+            </h2>
+            <p className="mt-2 text-[14px] leading-relaxed text-muted">
+              This permanently deletes your RUCHI account, meals, streaks, and
+              notification preferences. This can&apos;t be undone.
+            </p>
+            {deleteError && (
+              <p className="mt-3 text-[13px] text-flame" role="status">
+                {deleteError}
+              </p>
+            )}
+            <div className="mt-5 flex gap-3">
+              <Button
+                variant="ghost"
+                onClick={cancelDelete}
+                disabled={deleting}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="flame"
+                onClick={doDelete}
+                disabled={deleting}
+                className="flex-1"
+              >
+                {deleting ? (
+                  <>
+                    <Loader2 size={15} className="animate-spin" />
+                    Deleting…
+                  </>
+                ) : (
+                  "Delete my account"
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Real Cooking Stats — server-authoritative identity strip ───── */}
       {account && <CookingStatsCard stats={cloudStats} syncError={syncError} />}
@@ -490,10 +605,15 @@ export default function ProfileScreen() {
         </div>
       )}
 
-      <p className="mb-4 mt-9 text-center text-[12px] leading-relaxed text-muted">
-        RUCHI gives estimates, not medical or financial advice.
-        <br />
-        రుచి — let&apos;s cook. 🔥
+      <p className="mt-10 text-center text-[12px] text-muted">
+        RUCHI gives estimates, not medical or financial advice.{' '}
+        <button
+          type="button"
+          onClick={() => router.push("/privacy")}
+          className="underline hover:text-ink"
+        >
+          Privacy & account deletion
+        </button>
       </p>
     </div>
   );

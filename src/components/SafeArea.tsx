@@ -11,6 +11,7 @@
 // safety cap so a hung network can never trap the user on the splash.
 
 import { useEffect, useState, useCallback } from "react";
+import { usePathname } from "next/navigation";
 import { AnimatePresence } from "framer-motion";
 import { deriveAuthFlowState, useRuchi } from "@/lib/store";
 import { useScreen } from "@/lib/store/screens";
@@ -34,6 +35,7 @@ const SPLASH_CAP_MS = 4000;
 export default function SafeArea({ children }: { children: React.ReactNode }) {
   const screen = useScreen((s) => s.screen);
   const hydrate = useScreen((s) => s.hydrate);
+  const pathname = usePathname();
 
   // NOTE: deep-link params are read ONCE, by their consumers (Discover
   // reads ?category, applyDeepLink reads everything). Nothing here may
@@ -128,6 +130,19 @@ export default function SafeArea({ children }: { children: React.ReactNode }) {
   // While the splash is up, render nothing behind it (cheap, and no
   // flash of unauthenticated or authenticated content underneath).
   if (splashUp) return <span hidden>{children}</span>;
+
+  // Public document routes (the privacy policy) render THEIR OWN
+  // server-rendered children — the SPA shell (gate, screens, nav) must
+  // never take over a document page, or the policy would silently be
+  // replaced by the welcome gate after hydration. usePathname is known
+  // on both sides, so SSR and the first client render stay identical.
+  if (pathname === "/privacy") {
+    return (
+      <div className="grain min-h-dvh">
+        <main className="relative z-[1]">{children}</main>
+      </div>
+    );
+  }
 
   // Welcome gate covers every pre-auth state: fresh visitor, just signed
   // out, recovery-link landing, and post-signup confirmation notice. The

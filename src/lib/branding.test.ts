@@ -14,6 +14,18 @@ import path from "node:path";
 const ROOT = path.resolve(__dirname, "../..");
 const read = (p: string) => readFileSync(path.join(ROOT, p), "utf8");
 
+/**
+ * Source trees that carry the *canonical* web brand assets. Generated/copied
+ * artifacts (Android asset sync, build intermediates, etc.) are intentionally
+ * excluded — the invariant is "one canonical SOURCE asset", not "no copies
+ * anywhere a build tool might drop one".
+ */
+const SOURCE_ROOTS = [path.join(ROOT, "public"), path.join(ROOT, "src")];
+
+/** Paths that are generated/copied and must not count as canonical sources. */
+const isGeneratedCopy = (p: string) =>
+  /\b(android\/app\/build|android\/app\/src\/main\/assets\/public)\b/.test(p);
+
 /** Strip JS/XML comments so assertions see code, not prose. */
 function codeOf(src: string): string {
   return src
@@ -31,17 +43,23 @@ describe("brand: one canonical asset", () => {
     expect(svg).not.toMatch(/>\s*RUCHI\s*</);
   });
 
-  it("no duplicate logo copies scattered elsewhere", () => {
+  it("no duplicate logo copies in the SOURCE trees", () => {
     const dupes: string[] = [];
     const walk = (dir: string) => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         if (entry.name === "node_modules" || entry.name === ".next" || entry.name.startsWith(".")) continue;
         const p = path.join(dir, entry.name);
         if (entry.isDirectory()) walk(p);
-        else if (/^ruchi-logo/.test(entry.name) && p.endsWith(".svg")) dupes.push(p);
+        else if (
+          /^ruchi-logo/.test(entry.name) &&
+          p.endsWith(".svg") &&
+          !isGeneratedCopy(p)
+        ) {
+          dupes.push(p);
+        }
       }
     };
-    walk(ROOT);
+    for (const root of SOURCE_ROOTS) walk(root);
     expect(dupes).toEqual([path.join(ROOT, "public", "ruchi-logo.svg")]);
   });
 

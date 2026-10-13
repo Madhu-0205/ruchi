@@ -1,0 +1,82 @@
+<!doctype html>
+<!--
+  Bundled offline fallback (Capacitor `server.errorPath`).
+  Shown by the Android WebView only when the remote app at
+  https://ruchi-sage.vercel.app cannot be reached (no network,
+  server down). It must stay fully self-contained: inline CSS,
+  no CDN fonts, no scripts beyond the retry — it is displayed
+  precisely when the network is unavailable.
+  The retry URL MUST match `server.url` in capacitor.config.ts.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RUCHI — You're offline</title>
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; margin: 0; }
+      body {
+        min-height: 100dvh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: #faf6ef;
+        color: #2b2320;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        text-align: center;
+      }
+      .card {
+        max-width: 340px;
+        width: 100%;
+        padding: 32px 24px;
+        border: 1px solid #e8ddd0;
+        border-radius: 24px;
+        background: #ffffff;
+        box-shadow: 0 8px 30px rgba(43, 35, 32, 0.08);
+      }
+      img { width: 64px; height: 64px; }
+      h1 {
+        margin-top: 20px;
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      p {
+        margin-top: 12px;
+        font-size: 15px;
+        line-height: 1.55;
+        color: #6f635c;
+      }
+      button {
+        margin-top: 24px;
+        width: 100%;
+        padding: 13px 18px;
+        border: 0;
+        border-radius: 16px;
+        background: #e4572e;
+        color: #ffffff;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:active { background: #c8481f; }
+      .hint { margin-top: 14px; font-size: 12.5px; color: #948880; }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <img src="ruchi-logo-192.png" alt="" width="64" height="64" />
+      <h1>You're offline</h1>
+      <p>
+        RUCHI needs a connection to load your kitchen — your account, meals
+        and streaks live in the cloud. Check your network and try again.
+      </p>
+      <button type="button" onclick="location.href='https://ruchi-sage.vercel.app'">
+        Try again
+      </button>
+      <p class="hint">The app itself needs the internet — nothing is stored on this device.</p>
+    </main>
+  </body>
+</html>

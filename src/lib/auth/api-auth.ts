@@ -28,9 +28,34 @@ function supabaseEnv(): { url: string; key: string } | null {
   return { url, key };
 }
 
+function serviceRoleEnv(): { url: string; key: string } | null {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return { url, key };
+}
+
 /** True when Supabase env vars exist server-side. */
 export function isSupabaseServerConfigured(): boolean {
   return supabaseEnv() !== null;
+}
+
+/**
+ * Server-only client configured with the service-role key.
+ * Used ONLY for privileged server operations (e.g. account deletion).
+ * Never exposed to the browser and never constructed with a user-supplied key.
+ */
+export function createServiceRoleClient() {
+  const env = serviceRoleEnv();
+  if (!env) return null;
+  return createClient(env.url, env.key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+/** True when the service-role key is configured server-side. */
+export function isServiceRoleConfigured(): boolean {
+  return serviceRoleEnv() !== null;
 }
 
 export type ApiAuthResult =

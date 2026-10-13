@@ -115,6 +115,16 @@ interface RuchiState {
   upsertNudges: (incoming: NudgeEvent[]) => void;
   markNudgesRead: () => void;
   resetAll: (opts?: { keepKitchen?: boolean }) => void;
+  /**
+   * Local cleanup after the account was permanently DELETED on the server.
+   * Unlike `signOut`, the device copy must go too: the confirm dialog
+   * promises the account, meals, streaks and notification preferences are
+   * gone for good, and the server records are. Everything tied to the
+   * deleted account — including the local-only kitchen — is wiped and the
+   * persisted snapshot is dropped, so nothing can come back on reload.
+   * Never called when the deletion request failed.
+   */
+  resetAfterAccountDeletion: () => void;
 
   signIn: (email: string, password: string) => Promise<"signed-in" | "failed">;
   signUp: (
@@ -596,6 +606,44 @@ export const useRuchi = create<RuchiState>()(
           pendingConfirmationEmail: null,
           localOwner: prev ? `anon:${prev.id}` : null,
         });
+      },
+
+      resetAfterAccountDeletion: () => {
+        set({
+          account: null,
+          cloudSyncAt: undefined,
+          cloudStats: null,
+          recentCooked: [],
+          attention: { lastShown: null, suppressionUntil: null },
+          pausedCooking: null,
+          cookingSessionToken: null,
+          notificationChannels: {},
+          notificationTypePrefs: {},
+          syncError: false,
+          authError: null,
+          recoveryMode: false,
+          pendingConfirmationEmail: null,
+          // Deliberately NOT `anon:<id>` the way signOut does: there is no
+          // account left to re-attach this data to, so it must not be
+          // remembered as someone's leftovers.
+          localOwner: null,
+          name: "",
+          inventory: [],
+          history: [],
+          nudges: [],
+          lastNudges: {},
+          lastCookedAt: undefined,
+          prefs: DEFAULT_PREFS,
+        });
+        // Drop the persisted key as well. Without this the wiped state would
+        // be re-written on the next set() and the device copy would silently
+        // survive the account it belonged to.
+        try {
+          void useRuchi.persist.clearStorage();
+        } catch {
+          // Best-effort: the in-memory wipe above already removed the data
+          // from the running app.
+        }
       },
 
       syncNow: () => {

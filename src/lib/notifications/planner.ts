@@ -23,6 +23,7 @@
 
 import type { AttentionContext, AttentionType } from "@/lib/context/attention";
 import { isSuppressed, type SuppressionState } from "@/lib/context/attention";
+import { istHourOf } from "@/lib/datetime";
 import type {
   AdapterPrefs,
   Channel,
@@ -165,9 +166,11 @@ export async function planDelivery(
     return { action: "skip", reason: "suppressed" };
   }
 
-  // 4. Quiet hours (user-local hour; the cron runs at meal times so
-  //    this is normally a no-op — it exists to honor manual changes).
-  const hour = new Date(now).getHours();
+  // 4. Quiet hours (IST — the product's home timezone; the cron runs at
+  //    meal times so this is normally a no-op — it exists to honor manual
+  //    changes). istHourOf, never Date#getHours(): the host timezone is
+  //    UTC in CI and on Vercel, which would shift this window by 5.5h.
+  const hour = istHourOf(now);
   if (isQuietHour(hour, prefs.quietHours)) {
     return { action: "skip", reason: "quiet-hours" };
   }

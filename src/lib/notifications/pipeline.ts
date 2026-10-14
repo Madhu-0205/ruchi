@@ -27,7 +27,7 @@
 // semantics, so the idempotency contract is exercised for real.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { dayKeyOf } from "@/lib/datetime";
+import { dayKeyOf, istHourOf, IST_OFFSET_MIN } from "@/lib/datetime";
 import { weekKeyOf } from "@/lib/notifications/planner";
 import { webPushAdapter, isValidSubscription } from "@/lib/notifications/web-push";
 import {
@@ -48,12 +48,8 @@ import {
   updateNotificationStatus,
 } from "@/lib/notifications/ledger";
 
-/** The product's home timezone: cron times and daily caps are IST. */
-const IST_OFFSET_MIN = 330;
-
-export function istHourOf(now: number): number {
-  return new Date(now + IST_OFFSET_MIN * 60_000).getUTCHours();
-}
+/** IST helpers live in lib/datetime so planner and pipeline share one clock. */
+export { istHourOf } from "@/lib/datetime";
 
 export function istDayStartIso(now: number): string {
   const d = new Date(now + IST_OFFSET_MIN * 60_000);

@@ -10,7 +10,7 @@
 "use client";
 
 import { GeminiIngredientVisionService } from "./vision";
-import { visionDebug, recordVisionFallback } from "./observability";
+import { visionDebug, getLastVisionFallback } from "./observability";
 import type {
   IngredientVisionService,
   MealRecommendationService,
@@ -54,7 +54,13 @@ export function getVisionService(): IngredientVisionService {
           visionDebug("stage=gemini-success", { accepted: result.ingredients.length });
           return result;
         }
-        recordVisionFallback(result ? "no-ingredients-detected" : "gemini-unavailable");
+        // The service already recorded a fine-grained reason (network /
+        // auth-required / server-error / no-ingredients-detected /
+        // provider-error) via recordVisionFallback. Do NOT overwrite it here —
+        // the scan screen reads it to pick an honest message.
+        visionDebug("stage=gemini-fallback", {
+          reason: getLastVisionFallback() ?? "unknown",
+        });
         return result;
       },
     };

@@ -18,7 +18,9 @@
 import { findIngredient, INGREDIENTS } from "@/lib/data/ingredients";
 import { parseIngredientText } from "@/lib/engine/parse";
 import { getSupabase } from "@/lib/auth/supabase";
-import { logAiEvent } from "./observability";
+import { ACCEPTED_IMAGE_TYPES } from "./image";
+import { logAiEvent, recordVisionFallback } from "./observability";
+import { classifyVisionError } from "./errors";
 import type {
   IngredientVisionService,
   VisionAnalysis,
@@ -61,6 +63,7 @@ export class GeminiIngredientVisionService implements IngredientVisionService {
       });
 
       if (res.status === 401) {
+        recordVisionFallback("auth-required");
         logAiEvent("fallback_triggered", { stage: "vision-auth-required" });
         return null;
       }
@@ -68,6 +71,7 @@ export class GeminiIngredientVisionService implements IngredientVisionService {
       const data = (await res.json().catch(() => null)) as AnalyzeResponse | null;
 
       if (!res.ok) {
+        recordVisionFallback("server-error");
         logAiEvent("fallback_triggered", {
           stage: "vision-http-" + res.status,
           code: data?.code ?? "unknown",
@@ -80,6 +84,7 @@ export class GeminiIngredientVisionService implements IngredientVisionService {
         : [];
       if (names.length === 0) {
         // Honest empty result — nothing recognizable in the photo.
+        recordVisionFallback("no-ingredients-detected");
         logAiEvent("fallback_triggered", { stage: "vision-empty" });
         return null;
       }
@@ -94,6 +99,12 @@ export class GeminiIngredientVisionService implements IngredientVisionService {
       return analysis;
     } catch (err) {
       if (req.signal?.aborted) return null; // user cancelled — stay quiet
+      // Preserve WHY it failed so the UI can be honest: a client-side fetch
+      // failure is a network problem, not an unreadable photo. This reason is
+      // read by the scan screen via getLastVisionFallback().
+      recordVisionFallback(
+        classifyVisionError(err).kind === "network" ? "network" : "provider-error",
+      );
       logAiEvent("vision_failure", {
         reason: err instanceof Error ? err.message.slice(0, 120) : "unknown",
       });
@@ -175,10 +186,44 @@ function byAlias(name: string) {
   );
 }
 
-/** Convert the client's preprocessed data URL into a File for multipart upload. */
-async function dataUrlToFile(dataUrl: string): Promise<File> {
-  const res = await fetch(dataUrl);
-  const blob = await res.blob();
-  const type = blob.type || "image/jpeg";
-  return new File([blob], "ingredients.jpg", { type });
+/**
+ * Convert the client's preprocessed data URL into a File for multipart upload.
+ *
+ * IMPORTANT: do NOT use `fetch(dataUrl)` here. The production CSP sets
+ * `connect-src 'self' https://*.supabase.co` (see next.config.ts) and a
+ * `fetch()` to a `data:` URL is a connect-src request — the browser blocks
+ * it with a SecurityPolicyViolation before any network work happens, which
+ * made every photo scan fail with an opaque "Failed to fetch" regardless of
+ * the server. Decoding the base64 payload directly keeps the whole path
+ * client-local and CSP-independent.
+ */
+export async function dataUrlToFile(dataUrl: string): Promise<File> {
+  const comma = dataUrl.indexOf(",");
+  if (comma === -1) throw new Error("malformed image data URL");
+
+  const meta = dataUrl.slice(0, comma);
+  const payload = dataUrl.slice(comma + 1);
+  const declaredType = /^data:([^;,]+)/i.exec(meta)?.[1]?.toLowerCase();
+  const isBase64 = /;base64/i.test(meta);
+
+  const bytes = isBase64
+    ? decodeBase64(payload)
+    : new TextEncoder().encode(decodeURIComponent(payload));
+
+  // Keep only formats the server route accepts; anything else is a bug in
+  // preprocessing, not a user error, so fail loudly instead of uploading it.
+  const type = declaredType && ACCEPTED_IMAGE_TYPES.includes(declaredType as (typeof ACCEPTED_IMAGE_TYPES)[number])
+    ? declaredType
+    : "image/jpeg";
+
+  return new File([bytes], "ingredients.jpg", { type });
+}
+
+/** base64 → bytes via the browser's atob (no fetch, no CSP involvement). */
+function decodeBase64(payload: string): Uint8Array<ArrayBuffer> {
+  const binary = atob(payload);
+  const buffer = new ArrayBuffer(binary.length);
+  const out = new Uint8Array(buffer);
+  for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
+  return out;
 }

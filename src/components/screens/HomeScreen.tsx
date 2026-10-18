@@ -38,6 +38,7 @@ import {
   type AttentionRecipeFacts,
 } from "@/lib/context/attention";
 import { computeCostPerServing, computeNutrition } from "@/lib/engine/nutrition";
+import { activeGoals, decideScanGoalTransfer } from "@/lib/store/scan-goals";
 import type { Intent, People, Recipe } from "@/lib/types";
 
 const INTENTS: { id: Intent; label: string }[] = [
@@ -90,6 +91,55 @@ export default function HomeScreen() {
 
   const [query, setQuery] = useState("");
   const [intents, setIntents] = useState<Intent[]>(["high-protein"]);
+
+  // ── Scan → home goal transfer ────────────────────────────────
+  // The scan screen publishes the goal chips it confirmed as a revisioned
+  // transfer in the store; home is the single consumer. `intents` above
+  // stays the ONE source of recommendation goals — a transfer only replaces
+  // the selection, so filters, `recommend()`, the AI re-rank and the chips
+  // row can never disagree. Because a revision is consumable exactly once, a
+  // re-mount cannot resurrect an old scan, and a newer publication always
+  // beats a stale consumer.
+  const pendingScanGoals = useRuchi((s) => s.pendingScanGoals);
+  const scanGoalsRevision = useRuchi((s) => s.pendingScanGoalsRevision);
+  const scanGoalsConsumed = useRuchi((s) => s.pendingScanGoalsConsumed);
+  const consumePendingScanGoals = useRuchi((s) => s.consumePendingScanGoals);
+  /** Highest publication revision THIS mount has applied. */
+  const [appliedScanRevision, setAppliedScanRevision] = useState(0);
+
+  // The decision itself is pure and lives in `store/scan-goals`; here it is
+  // only turned into state. Adjust-state-during-render — the same pattern as
+  // `prevFilters` below — so the first paint after a scan already recommends
+  // the scanned goals instead of flashing Home's defaults. Applying a
+  // revision is exactly-once, so re-renders, Strict Mode's second pass and
+  // stale closures all converge on the same selection.
+  const scanGoalDecision = decideScanGoalTransfer(
+    { goals: pendingScanGoals, revision: scanGoalsRevision, consumed: scanGoalsConsumed },
+    appliedScanRevision,
+  );
+  if (scanGoalDecision.apply) {
+    setAppliedScanRevision(scanGoalDecision.revision);
+    setIntents(scanGoalDecision.goals);
+  }
+
+  // The goals this render recommends with: the transfer's when one applies,
+  // otherwise Home's own selection. Computed outside the memo so that the
+  // memo keeps a STABLE identity between renders (the AI re-rank effect
+  // depends on `filters`) — the decision itself is a fresh object each pass.
+  const goalIntents = activeGoals(scanGoalDecision, intents);
+
+  // Consume the payload once its goals are already on screen: it is a
+  // hand-off, not the source of truth, so clearing it must not change what
+  // this visit recommends. This is a store write, so it lives in an effect,
+  // never in render. It is idempotent and revision-guarded — a duplicate
+  // run, or one that lost a race with a newer publication, is rejected
+  // without disturbing that newer transfer.
+  useEffect(() => {
+    if (scanGoalsRevision > 0 && !scanGoalsConsumed) {
+      consumePendingScanGoals(scanGoalsRevision);
+    }
+  }, [scanGoalsRevision, scanGoalsConsumed, consumePendingScanGoals]);
+
   const [timeMax, setTimeMax] = useState<number>(30);
   const [budget, setBudget] = useState<number>(prefs.budget);
   const [people, setPeople] = useState<People>(prefs.defaultServings);
@@ -105,13 +155,13 @@ export default function HomeScreen() {
   const filters = useMemo(
     () => ({
       hasIds: inventoryIds,
-      intents,
+      intents: goalIntents,
       timeMax,
       budgetMax: budget,
       servings: people,
       diet: prefs.diet,
     }),
-    [inventoryIds, intents, timeMax, budget, people, prefs.diet],
+    [inventoryIds, goalIntents, timeMax, budget, people, prefs.diet],
   );
 
   // Deterministic engine first — instant recommendations, never a blank UI.

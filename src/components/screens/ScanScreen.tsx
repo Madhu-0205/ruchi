@@ -24,7 +24,8 @@ import { track } from "@/lib/engine/analytics";
 import { pushLastAction } from "@/lib/auth/supabase-data";
 import { getVisionService, prepareImageForVision } from "@/lib/ai";
 import type { VisionAnalysis } from "@/lib/ai";
-import type { Intent } from "@/lib/types";
+import { isIntentGoalChipId } from "@/lib/types";
+import type { GoalChipId } from "@/lib/types";
 
 // ── Flow states ─────────────────────────────────────────────
 // capture → analyzing → confirm → (home with recommendations)
@@ -38,7 +39,7 @@ interface ConfirmItem {
   uncertain: boolean;
 }
 
-const GOAL_CHIPS: { id: Intent | "filling"; label: string }[] = [
+const GOAL_CHIPS: { id: GoalChipId; label: string }[] = [
   { id: "high-protein", label: "💪 High Protein" },
   { id: "quick", label: "⚡ Under 15 min" },
   { id: "budget", label: "💰 Under ₹100" },
@@ -70,13 +71,16 @@ export default function ScanScreen() {
   const back = useScreen((s) => s.back);
   const go = useScreen((s) => s.go);
   const addItem = useRuchi((s) => s.addItem);
+  // Selected at the top level (never inside the handler) so the action
+  // reference is stable across renders.
+  const setPendingScanGoals = useRuchi((s) => s.setPendingScanGoals);
 
   const [phase, setPhase] = useState<Phase>("capture");
   const [error, setError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [items, setItems] = useState<ConfirmItem[]>([]);
   const [analysisLine, setAnalysisLine] = useState(0);
-  const [goals, setGoals] = useState<string[]>(["high-protein"]);
+  const [goals, setGoals] = useState<GoalChipId[]>(["high-protein"]);
   const [textValue, setTextValue] = useState("");
   const [newItemName, setNewItemName] = useState("");
   const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -248,6 +252,14 @@ export default function ScanScreen() {
     // Honest EXPLICIT_FOLLOWUP signal: the user JUST scanned and confirmed
     // real ingredients (fire-and-forget; own-row scoped by RLS).
     void pushLastAction({ kind: "scan", at: Date.now() });
+    // Hand the confirmed goals to the home screen through the store's
+    // revisioned transfer — the ONE authoritative channel, published before
+    // navigating so home can never mount ahead of it. Every selection is
+    // published, the empty one included: clearing all chips is a real goal
+    // selection, not the absence of one. Only ids the scan screen actually
+    // exposes as chips are forwarded; any other intent stays behind until
+    // the scan UI grows to offer it.
+    setPendingScanGoals(goals.filter(isIntentGoalChipId));
     go("home");
   };
 

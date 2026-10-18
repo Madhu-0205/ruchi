@@ -15,7 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { Button, Card, Chip, GlassSurface, Note, SectionTitle } from "@/components/ui";
-import { visionDebug } from "@/lib/ai/observability";
+import { visionDebug, getLastVisionFallback } from "@/lib/ai/observability";
 import { useScreen } from "@/lib/store/screens";
 import { useRuchi } from "@/lib/store";
 import { INGREDIENTS, findIngredient } from "@/lib/data/ingredients";
@@ -23,6 +23,8 @@ import { parseIngredientText } from "@/lib/engine/parse";
 import { track } from "@/lib/engine/analytics";
 import { pushLastAction } from "@/lib/auth/supabase-data";
 import { getVisionService, prepareImageForVision } from "@/lib/ai";
+import { classifyVisionError } from "@/lib/ai/errors";
+import { visionAnalysisToRows } from "@/lib/ai/scan";
 import type { VisionAnalysis } from "@/lib/ai";
 import { isIntentGoalChipId } from "@/lib/types";
 import type { GoalChipId } from "@/lib/types";
@@ -130,6 +132,7 @@ export default function ScanScreen() {
       const stale = () => generation !== visionGenerationRef.current || controller.signal.aborted;
 
       let analysis: VisionAnalysis | null = null;
+      let thrownReason: string | null = null;
       try {
         analysis = await getVisionService().detectIngredients({
           imageDataUrl: dataUrl,
@@ -137,30 +140,41 @@ export default function ScanScreen() {
           signal: controller.signal,
         });
       } catch (err) {
-        // NEVER swallow: surface the real error in dev, then fall back.
+        // NEVER swallow: classify the failure so the UI can be honest.
+        // The service already collapses most failures to null (and records
+        // the fine-grained reason); this catch only fires if something the
+        // service did not guard threw.
+        const failure = classifyVisionError(err);
+        if (failure.kind === "abort") {
+          return; // user left / cancelled — stay quiet
+        }
+        thrownReason = failure.kind;
         console.error("[RUCHI-VISION] service_threw:", err);
         analysis = null;
       }
 
       if (stale()) return; // superseded by a newer request or the user left
 
-      if (!analysis || analysis.ingredients.length === 0) {
-        // Honest fallback: never fake a vision result. Dev console carries
-        // the exact [RUCHI-VISION] fallback-reason from the service layer.
-        setError(analysis ? "nothing-found" : "vision-unavailable");
+      if (!analysis) {
+        // Hard failure — scanner unavailable, network, config, or auth.
+        // Read the reason the service recorded so we never blame the photo
+        // for a network/configuration problem that has nothing to do with it.
+        const reason = thrownReason ?? getLastVisionFallback();
+        setError(reason === "network" ? "network" : "vision-unavailable");
         setPhase("text");
         return;
       }
 
-      setItems(
-        analysis.ingredients.map((ing, i) => ({
-          key: `${ing.catalogId ?? ing.label}-${i}`,
-          id: ing.catalogId,
-          name: ing.label,
-          quantity: ing.quantity,
-          uncertain: ing.uncertain,
-        })),
-      );
+      // Preserve uncertain guesses (unmapped model names) as rows the user
+      // confirms or corrects — never silently drop them.
+      const rows = visionAnalysisToRows(analysis);
+      if (rows.length === 0) {
+        setError("nothing-found");
+        setPhase("text");
+        return;
+      }
+
+      setItems(rows);
       setPhase("confirm");
       track("ingredient_added", { via: "photo", detected: analysis.ingredients.length });
     },
@@ -626,7 +640,7 @@ export default function ScanScreen() {
               <div className="mb-5">
                 <Note tone="gold">
                   {error === "vision-unavailable" &&
-                    "I couldn't read the photo this time. Tell me what you have instead — I'll find the best meals from your ingredients."}
+                    "I couldn't reach the ingredient scanner right now. Type what you have instead — I'll find the best meals from your ingredients."}
                   {error === "nothing-found" &&
                     "Couldn't spot any ingredients in that photo. Try a closer shot, or just type them:"}
                   {error === "network" && "That didn't go through. Type what you have instead:"}

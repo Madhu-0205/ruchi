@@ -14,8 +14,14 @@
 //                         that ledger row (client → RPC, own-row RLS)
 //
 // After handling, the browser history is cleaned so a refresh never
-// re-triggers the same intent.
-
+// re-triggers the same intent. Cleanup happens HERE, at the consumer,
+// because removing a param before its reader has seen it would silence
+// the notification the user just tapped.
+//
+// One param cannot travel by URL alone: `?category` has to reach Discover,
+// and Discover is *created* by the route change applyDeepLink performs — by
+// then the param has been consumed. The router therefore passes the value
+// through `routedCategory` (see `peekRoutedCategory`).
 import { useScreen } from "@/lib/store/screens";
 import { track } from "@/lib/engine/analytics";
 import { useRuchi } from "@/lib/store";
@@ -55,6 +61,19 @@ export function readOnce(param: string): string | null {
   return value;
 }
 
+/**
+ * The category this deep link promised Discover, for the screen that mounts
+ * next. Set by `applyDeepLink` when a category is the winning target, and read
+ * (never consumed) by Discover's initial state — so the promise survives the
+ * navigation that creates the screen. `null` when the link promised no
+ * category, or promised one that a higher-priority link superseded.
+ */
+let routedCategory: string | null = null;
+
+export function peekRoutedCategory(): string | null {
+  return routedCategory;
+}
+
 export function getPendingCategory(): string | null {
   const raw = readOnce("category");
   if (!raw) return null;
@@ -67,6 +86,42 @@ export function getPendingResume(): string | null {
 
 export function getPendingRecipe(): string | null {
   return readOnce("recipe");
+}
+
+/** Every query param this module translates into app state. */
+const DEEP_LINK_PARAMS = ["category", "resume", "recipe", "n"] as const;
+
+/**
+ * Strip the deep-link params from the address bar once their intent has been
+ * applied, so a refresh, a re-open from history or a shared link starts clean
+ * instead of replaying a notification that was already delivered. The path,
+ * the hash and any unrelated params are preserved.
+ *
+ * Best-effort by design: if the History API is unavailable the in-memory
+ * one-shot gates still stop a second application within this page load.
+ */
+export function clearDeepLinkParams(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const url = new URL(window.location.href);
+    let touched = false;
+    for (const param of DEEP_LINK_PARAMS) {
+      if (url.searchParams.has(param)) {
+        url.searchParams.delete(param);
+        touched = true;
+      }
+    }
+    if (!touched) return;
+    const query = url.searchParams.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${url.pathname}${query ? `?${query}` : ""}${url.hash}`,
+    );
+  } catch {
+    // History API unavailable: nothing to clean, and nothing re-applies
+    // either.
+  }
 }
 
 /** Applied exactly once per load — safe to call on every page. */
@@ -98,6 +153,12 @@ export function applyDeepLink(): DeepLinkTarget | null {
       actioned: false,
       ledgerId: ledgerId ?? undefined,
     };
+    // The category only reaches Discover through this hand-off: the param is
+    // consumed here, and the screen is created by the route change below.
+    // A superseded category (a recipe/resume link won) deliberately does NOT
+    // set it, so a later visit to Discover in this load cannot inherit a
+    // stale promise.
+    routedCategory = category;
     useScreen.getState().go("discover");
   } else if (recipe) {
     target = {
@@ -109,6 +170,10 @@ export function applyDeepLink(): DeepLinkTarget | null {
     };
     useScreen.getState().go("meal", { recipeId: recipe });
   }
+
+  // The params have now been read (and their intent applied), so the URL can
+  // stop advertising them — a reload must not replay this tap.
+  clearDeepLinkParams();
 
   // record "opened" server-side (own-row, RLS-guarded RPC).
   if (ledgerId) {

@@ -8,7 +8,7 @@ import { Reveal } from "@/components/motion";
 import { RecipeCard } from "@/components/RecipeCard";
 import { useScreen } from "@/lib/store/screens";
 import { useRuchi } from "@/lib/store";
-import { getPendingCategory } from "@/lib/notifications/deep-link";
+import { getPendingCategory, peekRoutedCategory } from "@/lib/notifications/deep-link";
 import { discoverCategories, type DiscoverGroupId, type ResolvedCategory } from "@/lib/data/taxonomy";
 import { isAssumedPantry } from "@/lib/data/ingredients";
 import { computeCostPerServing, computeNutrition } from "@/lib/engine/nutrition";
@@ -63,8 +63,12 @@ export default function DiscoverScreen() {
   const [maxTime, setMaxTime] = useState(0);
   const [diet, setDiet] = useState<RecipeFilters["diet"]>("all");
   const [dietType, setDietType] = useState<RecipeFilters["dietType"]>("all");
-  // Deep-link: land on the category the notification promised (read-once).
-  const pendingCategory = getPendingCategory();
+  // Deep-link: land on the category the notification promised. The router
+  // already consumed the param (and cleaned the URL) to get here, so its
+  // routed value is preferred; the URL read stays as the fallback for any
+  // other way Discover can be opened. Both are plain reads, so the value is
+  // stable across renders and StrictMode's double render cannot eat it.
+  const pendingCategory = peekRoutedCategory() ?? getPendingCategory();
   const [active, setActive] = useState<string>(pendingCategory ?? "quick-easy");
   const go = useScreen((s) => s.go);
   const inventory = useRuchi((s) => s.inventory);

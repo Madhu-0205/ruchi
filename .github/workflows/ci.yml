@@ -29,6 +29,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Store shape (imports ⇄ RuchiState ⇄ implementation)
+        run: npm run verify:store
+
       - name: Typecheck
         run: npm run typecheck
 

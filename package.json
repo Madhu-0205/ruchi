@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
+    "verify:store": "node scripts/check-store-shape.mjs",
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",

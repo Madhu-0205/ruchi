@@ -65,6 +65,36 @@ export type Intent =
   | "spicy"
   | "indian";
 
+/**
+ * Channel a notification may be sent through. Device-scoped opt-ins only;
+ * the server validates each channel is wireable for the current user before
+ * scheduling, and never sends to a channel the user has not enabled.
+ */
+export type NotificationChannel =
+  | "web_push"
+  | "email"
+  | "whatsapp"
+  | "widget";
+
+/**
+ * The subset of Intent values the scan screen exposes as goal chips. This is
+ * the ONE definition of that set: the scan UI renders from it and the home
+ * screen validates incoming scan goals against it.
+ */
+export const GOAL_CHIP_IDS: readonly Intent[] = [
+  "high-protein",
+  "quick",
+  "budget",
+  "healthy",
+] as const;
+
+export type GoalChipId = (typeof GOAL_CHIP_IDS)[number];
+
+/** Type guard for untrusted goal ids (scan transfers, payloads, storage). */
+export function isIntentGoalChipId(id: string): id is GoalChipId {
+  return (GOAL_CHIP_IDS as readonly string[]).includes(id);
+}
+
 /** Meal slot — drives Discover sections and search. */
 export type RecipeCategory = "breakfast" | "lunch" | "dinner" | "snack" | "drink";
 

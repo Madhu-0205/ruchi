@@ -35,6 +35,7 @@ import type {
   UserPreferences,
 } from "@/lib/types";
 import { track } from "@/lib/engine/analytics";
+import { defensibleSavings } from "@/lib/personality";
 import { dayKeyOf } from "@/lib/datetime";
 import { useScreen } from "@/lib/store/screens";
 import {
@@ -180,8 +181,31 @@ interface RuchiState {
   dismissAttention: () => void;
   pauseCookingSession: (recipeId: string, stepIndex: number, stepCount: number) => void;
   clearPausedCooking: () => void;
-  cookingSessionToken: string | null;
+  /** Mint the token that makes a cooking session's completion writes idempotent. */
+  beginCookingSession: () => void;
   _makeSessionToken: () => string;
+  /** Test-only: wipe nudge state through a real action (ownership boundary). */
+  resetNudgeTestKit: () => void;
+
+  // ── auth actions (real Supabase-backed paths) ─────────────────
+  signIn: (email: string, password: string) => Promise<"signed-in" | "failed">;
+  signUp: (
+    email: string,
+    password: string
+  ) => Promise<"signed-in" | "needs-email-confirmation" | "failed">;
+  requestPasswordReset: (email: string) => Promise<"sent" | "failed">;
+  setNewPassword: (newPassword: string) => Promise<"updated" | "failed">;
+  dismissConfirmationNotice: () => void;
+  dismissRecovery: () => void;
+  consumeRecoveryRedirect: () => void;
+  signOut: () => void;
+  syncNow: () => void;
+
+  // ── scan → home goal transfer ────────────────────────────────
+  /** Publish a new transfer; returns its revision (strictly increasing). */
+  setPendingScanGoals: (goals: Intent[]) => number;
+  /** Consume exactly the publication at `expectedRevision`, once. */
+  consumePendingScanGoals: (expectedRevision: number) => boolean;
 }
 
 // ── in-memory-only patch helpers ──────────────────────────────
@@ -206,27 +230,6 @@ function invalidatedScanTransfer(): Pick<
   "pendingScanGoals" | "pendingScanGoalsConsumed"
 > {
   return { pendingScanGoals: [], pendingScanGoalsConsumed: true };
-}
-
-/**
- * Shared patch used by every owner-changing session boundary (not session
- * endings — those already wipe nudge state explicitly). It is deliberately
- * ASYMMETRIC: scan-goal transfer state is invalidated everywhere (a hand-off
- * belongs to the session that published it and must not follow a different
- * owner), but nudge state is left untouched here so the nudge boundary is
- * expressed only at the one place that knows whether an owner change is real
- * (`handleSignedIn`'s `ownsLocal` decision).
- *
- * This is what keeps the nudge fix atomic without reintroducing a second
- * `set()` at the boundary: the nudge wipe lives in the same patch as the
- * account/localOwner replacement for a real cross-owner sign-in, and is
- * entirely absent for a same-account return.
- */
-function resetTransferForOwnerChange(): Pick<
-  RuchiState,
-  "pendingScanGoals" | "pendingScanGoalsConsumed"
-> {
-  return invalidatedScanTransfer();
 }
 
 // ── store ─────────────────────────────────────────────────────
@@ -332,6 +335,13 @@ async function syncMeals(get: () => RuchiState): Promise<void> {
       useRuchi.setState({ syncError: true });
       return;
     }
+    // The streak is recorded server-side from the local calendar day only —
+    // the client never sends a streak number. One call per migrated meal;
+    // the RPC dedupes same-day repeats.
+    const streakWrites = await Promise.all(
+      missingRemotely.map((e) => recordStreakDay(e.cookedAt))
+    );
+    if (streakWrites.some((w) => !w.ok)) useRuchi.setState({ syncError: true });
   }
 
   const freshLocally = remote.data.filter((e) => !localKeys.has(mealKey(e)));
@@ -365,14 +375,34 @@ async function handleSignedIn(user: AccountUser, localOwner: LocalOwner): Promis
   // owner change — same-account re-entry preserves nudges.
   cancelPendingProfilePush();
   if (!ownsLocal) {
-    // Atomic single-set boundary: wipe the prior owner's nudges AND apply the
-    // new account in one `set()` so persistence never snapshots an intermediate
-    // "B signed in but still seeing A's nudges" state.
+    // Atomic single-set boundary: apply the new account AND neutralise every
+    // piece of the previous owner's personal state in one `set()`, so
+    // persistence never snapshots an intermediate "B signed in but still
+    // seeing A's name / prefs / nudges / history" state.
+    //
+    // Every field here is owner-scoped. `prefs` and `notificationTypePrefs`
+    // matter as much as nudges: one account's diet, allergies and muted
+    // notification types must never be read — or pushed — as another's. The
+    // neutral defaults are deliberate: if B's profile cannot be read, B gets
+    // an empty profile, never A's values.
     useRuchi.setState({
       account: user,
       localOwner: user.id,
+      name: "",
+      prefs: DEFAULT_PREFS,
+      inventory: [],
+      history: [],
+      lastCookedAt: undefined,
+      cloudSyncAt: undefined,
+      cloudStats: null,
+      recentCooked: [],
       nudges: [],
       lastNudges: {},
+      notificationChannels: {},
+      notificationTypePrefs: {},
+      attention: { lastShown: null, suppressionUntil: null },
+      pausedCooking: null,
+      cookingSessionToken: null,
       ...invalidatedScanTransfer(),
     });
   }
@@ -387,19 +417,22 @@ async function handleSignedIn(user: AccountUser, localOwner: LocalOwner): Promis
       fetchRecentCookedMeals(8),
       fetchNotificationPrefs(),
     ]);
+    // Only B's OWN server state ever lands here. The identity/prefs defaults
+    // from the boundary above remain in place when a read fails, so a failed
+    // profile fetch yields an empty profile rather than A's leftovers.
     const patch: Partial<RuchiState> = {
       cloudSyncAt: Date.now(),
       syncError: !(profile.ok && meals.ok),
-      inventory: [],
       history: meals.ok ? meals.data : [],
       lastCookedAt: meals.ok && meals.data[0] ? meals.data[0].cookedAt : undefined,
       cloudStats: stats.ok ? stats.data : null,
       recentCooked: recent.ok ? recent.data : [],
       notificationChannels: notifPrefs.ok ? (notifPrefs.data?.channels ?? {}) : {},
+      notificationTypePrefs: notifPrefs.ok ? (notifPrefs.data?.typePrefs ?? {}) : {},
+      prefs: profile.ok && profile.data?.prefs ? profile.data.prefs : DEFAULT_PREFS,
+      name: profile.ok ? (profile.data?.displayName ?? "") : "",
     };
-    if (profile.ok && profile.data?.prefs) patch.prefs = profile.data.prefs;
-    if (profile.ok && profile.data?.displayName) patch.name = profile.data.displayName;
-    if (Object.keys(patch).length > 0) useRuchi.setState(patch);
+    useRuchi.setState(patch);
     return;
   }
 
@@ -436,6 +469,7 @@ export const useRuchi = create<RuchiState>()(
       lastCookedAt: undefined,
 
       account: null,
+      localOwner: null,
       cloudSyncAt: undefined,
       cloudStats: null,
       recentCooked: [],
@@ -449,19 +483,18 @@ export const useRuchi = create<RuchiState>()(
       notificationChannels: {} as Partial<Record<PushChannel, boolean>>,
       notificationTypePrefs: {} as Partial<Record<NotificationOpportunityType, boolean>>,
       pendingConfirmationEmail: null,
-      localOwner: null,
 
       pendingScanGoals: [],
       pendingScanGoalsRevision: 0,
       pendingScanGoalsConsumed: false,
 
       // ── identity + reset paths ──────────────────────────────────
-      setName: (n) => {
+      setName: (n: string) => {
         set({ name: n });
         scheduleProfilePush(get);
       },
 
-      addItem: (ingredientId) => {
+      addItem: (ingredientId: string) => {
         if (get().inventory.some((i) => i.ingredientId === ingredientId)) return;
         const item: KitchenItem = { id: makeId(), ingredientId, addedAt: Date.now() };
         set({ inventory: [...get().inventory, item] });
@@ -469,12 +502,12 @@ export const useRuchi = create<RuchiState>()(
         mirrorKitchenToServer(get());
       },
 
-      removeItem: (ingredientId) => {
+      removeItem: (ingredientId: string) => {
         set({ inventory: get().inventory.filter((i) => i.ingredientId !== ingredientId) });
         mirrorKitchenToServer(get());
       },
 
-      setItemExpiry: (ingredientId, expiresAt) => {
+      setItemExpiry: (ingredientId: string, expiresAt?: number) => {
         set({
           inventory: get().inventory.map((i) =>
             i.ingredientId === ingredientId ? { ...i, expiresAt } : i
@@ -487,19 +520,19 @@ export const useRuchi = create<RuchiState>()(
         mirrorKitchenToServer(get());
       },
 
-      setPrefs: (p) => {
+      setPrefs: (p: Partial<UserPreferences>) => {
         set({ prefs: { ...get().prefs, ...p } });
         scheduleProfilePush(get);
       },
 
-      logCookedMeal: (entry) => {
+      logCookedMeal: (entry: Omit<MealHistoryEntry, "id" | "cookedAt">) => {
         const full: MealHistoryEntry = {
           ...entry,
           id: makeId(),
           cookedAt: Date.now(),
         };
         const existingIndex = get().history.findIndex(
-          (e) => e.recipeId === full.recipeId && dayKeyOf(e.cookedAt) === dayKeyOf(full)
+          (e) => e.recipeId === full.recipeId && dayKeyOf(e.cookedAt) === dayKeyOf(full.cookedAt)
         );
         if (existingIndex >= 0) {
           set({
@@ -508,10 +541,13 @@ export const useRuchi = create<RuchiState>()(
         } else {
           set({ history: [full, ...get().history].slice(0, 200) });
         }
-        mirrorLastActionToServer(get(), { kind: "log_cooked_meal", recipeId: full.recipeId, at: full.cookedAt });
+        mirrorLastActionToServer(get(), { kind: "start_cooking", recipeId: full.recipeId, at: full.cookedAt });
 
         if (get().account) {
           const token = get().cookingSessionToken ?? makeSessionToken();
+          // Persist a defensively minted token so a retry/double-click of the
+          // SAME cook reuses it instead of minting a second session.
+          if (get().cookingSessionToken !== token) set({ cookingSessionToken: token });
           void recordCookingCompletion({
             sessionToken: token,
             recipeId: full.recipeId,
@@ -546,7 +582,7 @@ export const useRuchi = create<RuchiState>()(
         }
       },
 
-      upsertNudges: (incoming) => {
+      upsertNudges: (incoming: NudgeEvent[]) => {
         const cur = get().nudges;
         const existing = new Set(cur.map((n) => n.kind));
         const fresh = incoming.filter(
@@ -564,7 +600,7 @@ export const useRuchi = create<RuchiState>()(
       markNudgesRead: () =>
         set({ nudges: get().nudges.map((n) => ({ ...n, read: true })) }),
 
-      resetAll: (opts) =>
+      resetAll: (opts?: { keepKitchen?: boolean }) =>
         set((s) => ({
           inventory: opts?.keepKitchen ? s.inventory : [],
           history: [],
@@ -619,7 +655,7 @@ export const useRuchi = create<RuchiState>()(
         }
       },
 
-      setNotificationChannel: (channel, enabled) => {
+      setNotificationChannel: (channel: NotificationChannel, enabled: boolean) => {
         if (!get().account) return;
         set({
           notificationChannels: { ...get().notificationChannels, [channel]: enabled },
@@ -631,7 +667,7 @@ export const useRuchi = create<RuchiState>()(
         );
       },
 
-      setNotificationType: (type, enabled) => {
+      setNotificationType: (type: NotificationOpportunityType, enabled: boolean) => {
         if (!get().account) return;
         set({
           notificationTypePrefs: { ...get().notificationTypePrefs, [type]: enabled },
@@ -645,21 +681,24 @@ export const useRuchi = create<RuchiState>()(
         );
       },
 
-      markNotificationOpened: (ledgerId) => {
+      markNotificationOpened: (ledgerId: string) => {
         if (!get().account) return;
         void markNotificationEngaged(ledgerId, false).then((r) => {
           if (!r.ok) useRuchi.setState({ syncError: true });
         });
       },
 
-      markNotificationActioned: (ledgerId) => {
+      markNotificationActioned: (ledgerId: string) => {
         if (!get().account) return;
         void markNotificationEngaged(ledgerId, true).then((r) => {
           if (!r.ok) useRuchi.setState({ syncError: true });
         });
       },
 
-      markAttentionShown: (type, recipeId) => {
+      markAttentionShown: (
+        type: import("@/lib/context/attention").AttentionType,
+        recipeId?: string,
+      ) => {
         const attention = {
           lastShown: { type, recipeId, at: Date.now() },
           suppressionUntil: null,
@@ -681,7 +720,7 @@ export const useRuchi = create<RuchiState>()(
         }
       },
 
-      pauseCookingSession: (recipeId, stepIndex, stepCount) => {
+      pauseCookingSession: (recipeId: string, stepIndex: number, stepCount: number) => {
         set({
           pausedCooking: { recipeId, stepIndex, stepCount, pausedAt: Date.now() },
         });
@@ -697,6 +736,8 @@ export const useRuchi = create<RuchiState>()(
 
       clearPausedCooking: () => set({ pausedCooking: null }),
 
+      beginCookingSession: () => set({ cookingSessionToken: makeSessionToken() }),
+
       _makeSessionToken: () => makeSessionToken(),
 
       // test-only escape hatch — resets every on-device nudge field through
@@ -707,7 +748,7 @@ export const useRuchi = create<RuchiState>()(
         set({ nudges: [] as NudgeEvent[], lastNudges: {} as Partial<Record<NudgeKind, number>> }),
 
       // ── auth actions (real Supabase-backed paths) ─────────────────
-      signIn: async (email, password) => {
+      signIn: async (email: string, password: string) => {
         set({ authError: null });
         const outcome = await sbSignIn(email, password);
         if (outcome.status !== "signed-in") {
@@ -718,7 +759,7 @@ export const useRuchi = create<RuchiState>()(
         return "signed-in";
       },
 
-      signUp: async (email, password) => {
+      signUp: async (email: string, password: string) => {
         set({ authError: null });
         const outcome = await sbSignUp(email, password);
         if (outcome.status === "failed") {
@@ -733,7 +774,7 @@ export const useRuchi = create<RuchiState>()(
         return "signed-in";
       },
 
-      requestPasswordReset: async (email) => {
+      requestPasswordReset: async (email: string) => {
         set({ authError: null });
         const outcome = await sbRequestPasswordReset(email);
         if (outcome.status === "failed") {
@@ -743,7 +784,7 @@ export const useRuchi = create<RuchiState>()(
         return "sent";
       },
 
-      setNewPassword: async (newPassword) => {
+      setNewPassword: async (newPassword: string) => {
         set({ authError: null });
         const outcome = await sbCompletePasswordReset(newPassword);
         if (outcome.status === "failed") {
@@ -754,14 +795,18 @@ export const useRuchi = create<RuchiState>()(
         return "updated";
       },
 
+      dismissConfirmationNotice: () => set({ pendingConfirmationEmail: null }),
+
+      dismissRecovery: () => set({ recoveryMode: false, authError: null }),
+
       consumeRecoveryRedirect: () => {
         const { recovery } = sbConsumeRecoveryRedirect();
         if (!recovery) return;
         set({ recoveryMode: true });
-        void useScreen.getState().go("profile", { recovery: true });
+        void useScreen.getState().go("profile", { recipeId: undefined });
       },
 
-      setPendingScanGoals: (goals) => {
+      setPendingScanGoals: (goals: Intent[]) => {
         const revision = get().pendingScanGoalsRevision + 1;
         set({
           pendingScanGoals: [...goals],
@@ -771,7 +816,7 @@ export const useRuchi = create<RuchiState>()(
         return revision;
       },
 
-      consumePendingScanGoals: (expectedRevision) => {
+      consumePendingScanGoals: (expectedRevision: number) => {
         // `get()` + `set()` in one synchronous turn: the revision checked is
         // the revision consumed. There is no await between them, so a newer
         // publication (or another consumer) can never slip in between.
@@ -849,6 +894,7 @@ export function initAuthListener(): void {
       void handleSignedIn(user, useRuchi.getState().localOwner ?? null);
     } else if (!user && useRuchi.getState().account) {
       cancelPendingProfilePush();
+      const existing = useRuchi.getState().account;
       useRuchi.setState({
         account: null,
         cloudSyncAt: undefined,
@@ -860,7 +906,7 @@ export function initAuthListener(): void {
         notificationChannels: {},
         notificationTypePrefs: {},
         syncError: false,
-        localOwner: `anon:${useRuchi.getState().account.id}`,
+        localOwner: existing ? `anon:${existing.id}` : null,
       });
     }
     useRuchi.setState({ authReady: true });
@@ -891,4 +937,178 @@ export function initAuthListener(): void {
   if (typeof window !== "undefined") {
     useRuchi.getState().consumeRecoveryRedirect();
   }
+}
+
+// ── module-level helpers used by tests and screens ──────────────
+
+/** Whose on-device leftovers currently live in localStorage. `null` = fresh device or nothing cooked yet. */
+export function localOwnerLabel(latest: AccountUser | null, localOwner: LocalOwner): string {
+  if (!localOwner) return "No account on this device yet";
+  if (latest && localOwner === latest.id) return `Signed in as ${latest.displayName ?? latest.email}`;
+  return localOwner.startsWith("anon:")
+    ? `Signed out — leftovers from ${localOwner.slice(5)} still on device`
+    : `Signed out — leftovers from ${localOwner} still on device`;
+}
+
+// ── pure helpers (exported so screens/tests never import brand names) ──
+
+export function mealKey(e: Pick<MealHistoryEntry, "recipeId" | "cookedAt">): string {
+  return `${e.recipeId}|${dayKeyOf(e.cookedAt)}`;
+}
+
+/**
+ * The local-calendar 9pm cutoff RUCHI uses for streak semantics. RUCHI treats
+ * any cook logged before 9pm IST as "today", so a 7:45pm cook counts for the
+ * current streak day, but a 9:10pm cook counts for tomorrow.
+ */
+export function eatLine(nowMs: number): number {
+  const t = new Date(nowMs);
+  t.setHours(21, 0, 0, 0);
+  return t.getTime();
+}
+
+export function computeStreak(hist: MealHistoryEntry[], now = Date.now()): number {
+  const cutoffMs = eatLine(now);
+  // Days that count: a cook after that day's 9pm line belongs to the next
+  // day, and anything logged in the future (clock skew) never counts.
+  const daysWithMeals = new Set<string>();
+  for (const e of hist) {
+    if (e.cookedAt > cutoffMs) continue;
+    daysWithMeals.add(dayKeyOf(e.cookedAt));
+  }
+
+  const cursor = new Date(now);
+  cursor.setHours(21, 0, 0, 0);
+
+  // Today is still open: if nothing was cooked today yet, the streak is
+  // anchored to yesterday instead of collapsing to zero at midnight.
+  if (!daysWithMeals.has(dayKeyOf(cursor.getTime()))) {
+    cursor.setDate(cursor.getDate() - 1);
+    if (!daysWithMeals.has(dayKeyOf(cursor.getTime()))) return 0;
+  }
+
+  let length = 0;
+  while (length < 366 && daysWithMeals.has(dayKeyOf(cursor.getTime()))) {
+    length++;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  return length;
+}
+
+/**
+ * A stable, read-only view of this device's cook history, shaped for the
+ * profile widgets. Computed locally from the same history atom the rest of
+ * the app reads, so the server can never invent a streak the device did not
+ * already see or defend against.
+ */
+export function weeklyProgress(s: Pick<RuchiState, "history">) {
+  const week = [];
+  let weekMeals = 0;
+  let saved = 0;
+  let protein = 0;
+  const today = new Date();
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const dayStart = d.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setHours(23, 59, 59, 999);
+    const dayMeals = s.history.filter(
+      (m) => m.cookedAt >= dayStart && m.cookedAt <= dayEnd.getTime()
+    );
+    weekMeals += dayMeals.length;
+    // Only defensible savings count: a meal's own comparison must be positive.
+    // Anything else contributes nothing rather than an invented number.
+    for (const m of dayMeals) {
+      const delta = defensibleSavings(m.cost, m.deliveryCompareCost);
+      if (delta !== null) saved += delta;
+      protein += m.proteinG;
+    }
+    week.push({ date: dayStart, meals: dayMeals.length });
+  }
+
+  return {
+    week,
+    meals: weekMeals,
+    saved,
+    protein,
+    timesCooked: s.history.length,
+    recipesCooked: new Set(s.history.map((h) => h.recipeId)).size,
+  };
+}
+
+/** Current local-calendar streak, read from the store's own history atom. */
+export function streak(s: Pick<RuchiState, "history">, now = Date.now()): number {
+  return computeStreak(s.history, now);
+}
+
+export function computedStreakViaHistory(s: Pick<RuchiState, "history">, now = Date.now()): number {
+  return computeStreak(s.history, now);
+}
+
+// ── auth flow derivation (so the launch screen can render the honest flow) ──
+
+export type AuthFlowState =
+  | "initializing"
+  | "authenticated"
+  | "recovery"
+  | "confirmation-required"
+  | "unauthenticated";
+
+export function deriveAuthFlowState(s: Pick<RuchiState, "authReady" | "account" | "recoveryMode" | "pendingConfirmationEmail">): AuthFlowState {
+  // A recovery link outranks init: routing it to a sign-in form would discard
+  // the session the link just established.
+  if (s.recoveryMode) return "recovery";
+  if (!s.authReady) return "initializing";
+  if (s.pendingConfirmationEmail) return "confirmation-required";
+  if (s.account) return "authenticated";
+  return "unauthenticated";
+}
+
+// ── test-only escapes (not part of the product surface) ──────────
+
+/**
+ * Reset the auth listener guard so each test starts with a fresh listener
+ * registration. The real `initAuthListener()` is a one-per-process singleton;
+ * this only clears the guard so the next call in the same process re-runs the
+ * setup the tests want to observe.
+ */
+export function resetAuthListenerForTests(): void {
+  authListenerAttached = false;
+}
+
+/**
+ * Plants a cooking-session token on the running store so the cooking-stats
+ * tests can control session identity without touching real Supabase. Not part
+ * of the product surface — real sessions come from `logCookedMeal`.
+ */
+export function setSessionTokenForTests(token: string | null): void {
+  useRuchi.setState({ cookingSessionToken: token });
+}
+
+/**
+ * A thin wrapper around `logCookedMeal` + session-token setup used by the
+ * cooking-stats tests so they can exercise the full "cook -> server -> stats"
+ * path without wiring a real Supabase session.
+ */
+export async function beginCookingSessionForTests(recipe: {
+  id: string;
+  name: string;
+  servings: number;
+  proteinG: number;
+  calories: number;
+  cost: number;
+  deliveryCompareCost: number;
+}): Promise<void> {
+  useRuchi.setState({ cookingSessionToken: makeSessionToken() });
+  useRuchi.getState().logCookedMeal({
+    recipeId: recipe.id,
+    recipeName: recipe.name,
+    servings: recipe.servings,
+    proteinG: recipe.proteinG,
+    calories: recipe.calories,
+    cost: recipe.cost,
+    deliveryCompareCost: recipe.deliveryCompareCost,
+  });
 }

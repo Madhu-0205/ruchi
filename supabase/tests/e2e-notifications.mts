@@ -101,10 +101,7 @@ function makeClient(pool) {
           };
           return api;
         },
-        contains(col, obj) {
-          // used only by the route shell, not the pipeline — unsupported here
-          throw new Error("contains() not supported in sim adapter");
-        },
+
       };
     },
   };
@@ -188,7 +185,8 @@ async function main() {
   // ══════════════ SCENARIO 1: paused session → RESUME ════════
   await setJson("paused_session", UA, { recipeId: "paneer-egg-bhurji", stepIndex: 3, stepCount: 6, pausedAt: NOW - 25 * 60000 });
   const r1 = await processUser(client, await rowFor(UA), NOW, fakeAdapter);
-  r1 === "delivered" ? pass("paused session → delivered (resume_cooking wins)") : fail(`expected delivered, got ${r1}`);
+  if (r1 === "delivered") pass("paused session → delivered (resume_cooking wins)");
+  else fail(`expected delivered, got ${r1}`);
 
   const aSent = await sentRows(UA);
   if (aSent.length === 1 && aSent[0].opportunity_type === "resume_cooking") pass("exactly ONE ledger row, type resume_cooking");
@@ -206,11 +204,13 @@ async function main() {
   // the policy's duplicate check (lastSentDedupKey) fires BEFORE the
   // ledger claim: suppressed(duplicate), never a second send.
   const r2 = await processUser(client, await rowFor(UA), NOW, fakeAdapter);
-  r2 === "suppressed" ? pass("second run: suppressed (duplicate — policy fires before the claim)") : fail(`expected suppressed(duplicate), got ${r2}`);
+  if (r2 === "suppressed") pass("second run: suppressed (duplicate — policy fires before the claim)");
+  else fail(`expected suppressed(duplicate), got ${r2}`);
   const aSent2 = await sentRows(UA);
   aSent2.length === 1 ? pass("still exactly ONE ledger row after re-run") : fail(`idempotency broken: ${aSent2.length} rows`);
-  const dupReasons = (await ledgerRows(UA)).filter((r) => r.status === "suppressed").map((r) => r.suppression_reason);
-  dupReasons.includes("duplicate") ? pass("duplicate reason recorded") : fail(`no duplicate suppression row: ${dupReasons}`);
+  const _dupReasons = (await ledgerRows(UA)).filter((r) => r.status === "suppressed").map((r) => r.suppression_reason);
+  if (_dupReasons.includes("duplicate")) pass("duplicate reason recorded");
+  else fail(`no duplicate suppression row`);
 
   // ══════════════ SCENARIO 3: quiet hours ════════════════════
   await setJson("paused_session", UB, { recipeId: "paneer-egg-bhurji", stepIndex: 2, stepCount: 6, pausedAt: NOW - 20 * 60000 });
@@ -218,7 +218,8 @@ async function main() {
   const h = new Date(NOW + 330 * 60000).getUTCHours();
   await pool.query(`update public.notification_prefs set quiet_hours = $2::jsonb where user_id = $1`, [UB, JSON.stringify({ start: h, end: (h + 1) % 24 })]);
   const r3 = await processUser(client, await rowFor(UB), NOW, fakeAdapter);
-  r3 === "suppressed" ? pass("quiet hours → suppressed (no send)") : fail(`expected suppressed, got ${r3}`);
+  if (r3 === "suppressed") pass("quiet hours → suppressed (no send)");
+  else fail(`expected suppressed, got ${r3}`);
   delivered.filter((d) => d.userId === UB).length === 0 ? pass("user B received nothing during quiet hours") : fail("user B got a push in quiet hours");
   const bSupp = (await ledgerRows(UB)).filter((r) => r.status === "suppressed");
   bSupp.length >= 1 && bSupp[0].suppression_reason === "quiet_hours" ? pass("suppression reason recorded (quiet_hours)") : fail(`suppression row wrong: ${JSON.stringify(bSupp[0]?.suppression_reason)}`);
@@ -228,7 +229,8 @@ async function main() {
   await pool.query(`delete from public.notification_ledger where user_id = $1`, [UB]); // clean slate
   await pool.query(`update public.notification_prefs set type_prefs = '{"resume_cooking":false}'::jsonb where user_id = $1`, [UB]);
   const r4 = await processUser(client, await rowFor(UB), NOW, fakeAdapter);
-  r4 === "suppressed" ? pass("per-type opt-out → suppressed (user_disabled)") : fail(`expected suppressed(user_disabled), got ${r4}`);
+  if (r4 === "suppressed") pass("per-type opt-out → suppressed (user_disabled)");
+  else fail(`expected suppressed(user_disabled), got ${r4}`);
   const bReasons = (await ledgerRows(UB)).map((r) => r.suppression_reason);
   bReasons.includes("user_disabled") ? pass("user_disabled reason recorded") : fail(`no user_disabled row: ${bReasons}`);
 
@@ -237,11 +239,13 @@ async function main() {
   await pool.query(`delete from public.notification_ledger where user_id = $1`, [UB]);
   // B has a paused session (still set) and no ledger rows → first run delivers
   const r5a = await processUser(client, await rowFor(UB), NOW, fakeAdapter);
-  r5a === "delivered" ? pass("B: fresh day delivers") : fail(`B first run expected delivered, got ${r5a}`);
+  if (r5a === "delivered") pass("B: fresh day delivers");
+  else fail(`B first run expected delivered, got ${r5a}`);
   // Second opportunity same day: rotate the paused recipe so the dedup key differs
   await setJson("paused_session", UB, { recipeId: "egg-maggi", stepIndex: 1, stepCount: 4, pausedAt: NOW - 10 * 60000 });
   const r5b = await processUser(client, await rowFor(UB), NOW, fakeAdapter);
-  r5b === "suppressed" ? pass("second send same day → daily_cap") : fail(`expected daily_cap suppression, got ${r5b}`);
+  if (r5b === "suppressed") pass("second send same day → daily_cap");
+  else fail(`expected daily_cap suppression, got ${r5b}`);
 
   // ══════════════ SCENARIO 6: kitchen mirror ═════════════════
   const UC = randomUUID();
@@ -252,11 +256,11 @@ async function main() {
   const r6 = await processUser(client, await rowFor(UC), NOW, fakeAdapter);
   if (r6 === "delivered") {
     const cSent = (await sentRows(UC)).pop();
-    cSent.opportunity_type === "ingredient_opportunity"
-      ? pass("kitchen mirror → ingredient_opportunity delivered")
-      : fail(`expected ingredient_opportunity, got ${cSent.opportunity_type}`);
+    if (cSent.opportunity_type === "ingredient_opportunity") pass("kitchen mirror → ingredient_opportunity delivered");
+    else fail(`expected ingredient_opportunity, got ${cSent.opportunity_type}`);
     const ing = getRecipe(String(cSent.recipe_id));
-    ing ? pass(`ingredient copy names a REAL recipe (${cSent.recipe_id})`) : fail(`fabricated recipe id: ${cSent.recipe_id}`);
+    if (ing) pass(`ingredient copy names a REAL recipe (${cSent.recipe_id})`);
+    else fail(`fabricated recipe id: ${cSent.recipe_id}`);
   } else {
     // Legitimate if the engine's strict eligibility didn't fire for this kitchen; assert honesty instead
     const supp = (await ledgerRows(UC)).filter((r) => r.status === "suppressed");
@@ -265,11 +269,12 @@ async function main() {
   // Empty mirror → silence
   await setJson("kitchen_mirror", UC, { ids: [], updatedAt: NOW });
   const r6b = await processUser(client, await rowFor(UC), NOW, fakeAdapter);
-  r6b === "skipped" ? pass("empty kitchen → silence (no valid opportunity)") : fail(`empty kitchen expected skipped, got ${r6b}`);
+  if (r6b === "skipped") pass("empty kitchen → silence (no valid opportunity)");
+  else fail(`empty kitchen expected skipped, got ${r6b}`);
 
   // ══════════════ SCENARIO 7: isolation ══════════════════════
   const aLedgerBefore = (await ledgerRows(UA)).length;
-  const r7 = await processUser(client, await rowFor(UB), NOW, fakeAdapter); // B re-runs
+  await processUser(client, await rowFor(UB), NOW, fakeAdapter); // B re-runs (r7 unused by design: isolation asserted by before/after ledger lengths)
   const aLedgerAfter = (await ledgerRows(UA)).length;
   aLedgerBefore === aLedgerAfter ? pass("B's re-run never touches A's ledger") : fail("A's ledger changed during B's run!");
 
@@ -295,6 +300,4 @@ async function rowFor(userId) {
     last_action: r.last_action,
     attention_state: r.attention_state,
   };
-}
-
-main().catch((e) => { console.error(e); process.exit(1); });
+}  main().catch((_e) => { console.error(_e); process.exit(1); });

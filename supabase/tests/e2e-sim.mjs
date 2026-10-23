@@ -32,7 +32,8 @@ const fail = (m) => { console.log(`FAIL: ${m}`); failures++; };
 function sh(cmd) {
   execSync(`psql -q -h /tmp -U ${PGUSER} -d postgres -c "${cmd}"`, { stdio: "pipe" });
 }
-const sql = (t, text, params) => t.query(text, params);
+// kept for archive compatibility; not used in the current sim paths.
+const sql = (_t, _text, _params) => {}; // eslint-disable-line @typescript-eslint/no-unused-vars
 const one = async (t, text, params) => (await t.query(text, params)).rows[0] ?? null;
 
 /** One client "request": non-owner role, identity claim, committed tx. */
@@ -422,7 +423,7 @@ try {
         [USER_A.id, JSON.stringify({ start: 30, end: 8 })],
       );
       return { blocked: false };
-    } catch (e) {
+    } catch {
       return { blocked: true };
     }
   });
@@ -448,7 +449,7 @@ try {
         [USER_A.id],
       );
       return { rows: r.rowCount };
-    } catch (e) {
+    } catch {
       return { rows: -1, blocked: true };
     }
   });
